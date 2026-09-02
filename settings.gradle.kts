@@ -1,4 +1,4 @@
-pluginManagement {
+﻿pluginManagement {
     repositories {
         google()
         mavenCentral()
@@ -14,5 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "futon-parsers"
-include("futon-parsers-ksp")
+rootProject.name = "hanten-parsers"
+include("hanten-parsers-ksp")
+

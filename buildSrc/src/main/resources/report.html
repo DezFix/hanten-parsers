@@ -57,12 +57,12 @@
 				data-bs-toggle="modal" style="cursor: pointer;">
 				<i data-feather="power"></i>
 			</td>
-			{% elseif case.failure.type == 'io.github.landwarderer.futon.parsers.CloudFlareProtectedException' %}
+			{% elseif case.failure.type == 'hanten.wre.app.parsers.CloudFlareProtectedException' %}
 			<td class="table-secondary text-center" data-bs-target="#failure_{{ case.hashCode }}"
 				data-bs-toggle="modal" style="cursor: pointer;">
 				<i data-feather="shield"></i>
 			</td>
-			{% elseif case.failure.type == 'io.github.landwarderer.futon.parsers.exception.AuthRequiredException' %}
+			{% elseif case.failure.type == 'hanten.wre.app.parsers.exception.AuthRequiredException' %}
 			<td class="table-secondary text-center" data-bs-target="#failure_{{ case.hashCode }}"
 				data-bs-toggle="modal" style="cursor: pointer;">
 				<i data-feather="user-x"></i>

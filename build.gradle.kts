@@ -1,4 +1,4 @@
-import tasks.ReportGenerateTask
+﻿import tasks.ReportGenerateTask
 
 plugins {
     `java-library`
@@ -7,7 +7,7 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
-group = "io.github.landwarderer"
+group = "hanten.wre"
 version = "2.0.0"
 
 tasks.test {
@@ -24,7 +24,7 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
             "-opt-in=kotlin.RequiresOptIn",
             "-opt-in=kotlin.contracts.ExperimentalContracts",
             "-opt-in=kotlinx.coroutines.ExperimentalCoroutinesApi",
-            "-opt-in=io.github.landwarderer.futon.parsers.InternalParsersApi",
+            "-opt-in=hanten.wre.app.parsers.InternalParsersApi",
         )
     }
 }
@@ -51,7 +51,7 @@ dependencies {
     implementation(libs.androidx.collection)
     api(libs.jsoup)
 
-    ksp(project(":futon-parsers-ksp"))
+    ksp(project(":hanten-parsers-ksp"))
 
     testImplementation(libs.junit.api)
     testImplementation(libs.junit.engine)
@@ -62,3 +62,4 @@ dependencies {
 }
 
 tasks.register<ReportGenerateTask>("generateTestsReport")
+

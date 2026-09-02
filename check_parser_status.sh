@@ -1,9 +1,9 @@
-#!/bin/bash
+﻿#!/bin/bash
 
-# Script to check the status of all parser websites in futon-parsers
+# Script to check the status of all parser websites in hanten-parsers
 # Extracts domain info from Kotlin parser files and performs HTTP HEAD requests
 
-PARSER_DIR="/workspaces/futon-parsers/src/main/kotlin/io/github/landwarderer/futon/parsers/site"
+PARSER_DIR="/workspaces/hanten-parsers/src/main/kotlin/hanten/wre/app/parsers/site"
 TIMEOUT=5
 
 # Color codes
@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}========== Futon Parsers Website Status Checker ==========${NC}"
+echo -e "${BLUE}========== Hanten Parsers Website Status Checker ==========${NC}"
 echo "Scanning parser files for domain information..."
 echo ""
 
@@ -62,19 +62,19 @@ while IFS= read -r domain; do
     http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time "$TIMEOUT" -L "$domain" 2>/dev/null)
     
     if [[ -z "$http_code" ]]; then
-        echo -e "${RED}✗${NC} $domain - ${RED}TIMEOUT/ERROR${NC}"
+        echo -e "${RED}вњ—${NC} $domain - ${RED}TIMEOUT/ERROR${NC}"
         echo "TIMEOUT" >> "$temp_results"
     elif [[ "$http_code" -ge 200 && "$http_code" -lt 300 ]]; then
-        echo -e "${GREEN}✓${NC} $domain - ${GREEN}$http_code OK${NC}"
+        echo -e "${GREEN}вњ“${NC} $domain - ${GREEN}$http_code OK${NC}"
         echo "OK" >> "$temp_results"
     elif [[ "$http_code" -ge 300 && "$http_code" -lt 400 ]]; then
-        echo -e "${YELLOW}→${NC} $domain - ${YELLOW}$http_code REDIRECT${NC}"
+        echo -e "${YELLOW}в†’${NC} $domain - ${YELLOW}$http_code REDIRECT${NC}"
         echo "REDIRECT" >> "$temp_results"
     elif [[ "$http_code" -ge 400 && "$http_code" -lt 500 ]]; then
-        echo -e "${RED}✗${NC} $domain - ${RED}$http_code CLIENT_ERROR${NC}"
+        echo -e "${RED}вњ—${NC} $domain - ${RED}$http_code CLIENT_ERROR${NC}"
         echo "CLIENT_ERROR" >> "$temp_results"
     elif [[ "$http_code" -ge 500 ]]; then
-        echo -e "${RED}✗${NC} $domain - ${RED}$http_code SERVER_ERROR${NC}"
+        echo -e "${RED}вњ—${NC} $domain - ${RED}$http_code SERVER_ERROR${NC}"
         echo "SERVER_ERROR" >> "$temp_results"
     fi
     
@@ -94,11 +94,11 @@ timeout_count=$(grep -c "^TIMEOUT$" "$temp_results" 2>/dev/null || echo 0)
 # Print summary
 echo ""
 echo -e "${BLUE}========== Summary ==========${NC}"
-echo -e "${GREEN}✓ OK (2xx):${NC}              $ok_count"
-echo -e "${YELLOW}→ Redirects (3xx):${NC}       $redirect_count"
-echo -e "${RED}✗ Client Errors (4xx):${NC}   $client_error_count"
-echo -e "${RED}✗ Server Errors (5xx):${NC}   $server_error_count"
-echo -e "${RED}✗ Timeout/Error:${NC}         $timeout_count"
+echo -e "${GREEN}вњ“ OK (2xx):${NC}              $ok_count"
+echo -e "${YELLOW}в†’ Redirects (3xx):${NC}       $redirect_count"
+echo -e "${RED}вњ— Client Errors (4xx):${NC}   $client_error_count"
+echo -e "${RED}вњ— Server Errors (5xx):${NC}   $server_error_count"
+echo -e "${RED}вњ— Timeout/Error:${NC}         $timeout_count"
 echo ""
 echo "Total domains checked: $total_domains"
 
@@ -110,3 +110,4 @@ fi
 
 # Cleanup
 rm "$temp_domains" "$temp_results"
+

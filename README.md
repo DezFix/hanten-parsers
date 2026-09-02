@@ -1,13 +1,13 @@
-> [!NOTE]
-> Futon has switched to using Kotatsu Redo parsers. This parsers repository will not be updated for now.
+﻿> [!NOTE]
+> Hanten has switched to using Kotatsu Redo parsers. This parsers repository will not be updated for now.
 
 
-# Futon parsers
+# Hanten parsers
 
 This library provides a collection of manga parsers for convenient access manga available on the web. It can be used in
 JVM and Android applications.
 
-![Sources count](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FAppFuton%2Ffuton-parsers%2Frefs%2Fheads%2Fmaster%2F.github%2Fsummary.yaml&query=total&label=manga%20sources&color=%23E9321C) [![](https://jitpack.io/v/AppFuton/futon-parsers.svg)](https://jitpack.io/#AppFuton/futon-parsers) ![License](https://img.shields.io/github/license/AppFuton/Futon)
+![Sources count](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FAppHanten%2FHanten-parsers%2Frefs%2Fheads%2Fmaster%2F.github%2Fsummary.yaml&query=total&label=manga%20sources&color=%23E9321C) [![](https://jitpack.io/v/AppHanten/Hanten-parsers.svg)](https://jitpack.io/#AppHanten/Hanten-parsers) ![License](https://img.shields.io/github/license/AppHanten/Hanten)
 
 ## Usage
 
@@ -27,20 +27,20 @@ JVM and Android applications.
    For Java/Kotlin project:
     ```groovy
     dependencies {
-        implementation("com.github.AppFuton:futon-parsers:$parsers_version")
+        implementation("com.github.AppHanten:Hanten-parsers:$parsers_version")
     }
     ```
 
    For Android project:
     ```groovy
     dependencies {
-        implementation("com.github.AppFuton:futon-parsers:$parsers_version") {
+        implementation("com.github.AppHanten:Hanten-parsers:$parsers_version") {
             exclude group: 'org.json', module: 'json'
         }
     }
     ```
 
-    Versions are available on [JitPack](https://jitpack.io/#AppFuton/futon-parsers)
+    Versions are available on [JitPack](https://jitpack.io/#AppHanten/Hanten-parsers)
 
    When used in Android
    projects, [core library desugaring](https://developer.android.com/studio/write/java8-support#library-desugaring) with
@@ -56,13 +56,13 @@ JVM and Android applications.
 
    `mangaLoaderContext` is an implementation of the `MangaLoaderContext` class.
    See examples
-    of [Android](https://github.com/AppFuton/Futon/blob/devel/app/src/main/kotlin/io/github/landwarderer/futon/core/parser/MangaLoaderContextImpl.kt)
-    and [Non-Android](https://github.com/AppFuton/futon-dl/blob/master/src/main/kotlin/io/github/landwarderer/futon/dl/parsers/MangaLoaderContextImpl.kt)
+    of [Android](https://github.com/AppHanten/Hanten/blob/devel/app/src/main/kotlin/hanten/wre/app/core/parser/MangaLoaderContextImpl.kt)
+    and [Non-Android](https://github.com/AppHanten/Hanten-dl/blob/master/src/main/kotlin/hanten/wre/app/dl/parsers/MangaLoaderContextImpl.kt)
    implementation.
 
 ## Projects that use the library
 
-- [Futon](https://github.com/AppFuton/Futon)
+- [Hanten](https://github.com/AppHanten/Hanten)
 
 ## Contribution
 
@@ -72,3 +72,4 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the guidelines.
 
 The developers of this application have no affiliation with the content available in the app. It is collected from
 sources freely available through any web browser.
+

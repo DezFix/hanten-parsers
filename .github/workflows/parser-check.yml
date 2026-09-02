@@ -43,7 +43,7 @@ jobs:
             -   name: Extract and validate parser metadata 📊
                 run: |
                     #!/bin/bash
-                    PARSER_DIR="src/main/kotlin/io/github/landwarderer/futon/parsers/site"
+                    PARSER_DIR="src/main/kotlin/hanten/wre/app/parsers/site"
                     REPORT_FILE="parser_health_report.txt"
 
                     {
@@ -81,10 +81,10 @@ jobs:
                     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                 run: |
                     #!/bin/bash
-                    PARSER_DIR="src/main/kotlin/io/github/landwarderer/futon/parsers/site"
+                    PARSER_DIR="src/main/kotlin/hanten/wre/app/parsers/site"
                     TIMEOUT="${{ inputs.timeout || '5' }}"
                     TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-                    IMPORT_STMT="import io.github.landwarderer.futon.parsers.Broken"
+                    IMPORT_STMT="import hanten.wre.app.parsers.Broken"
                     DOMAIN_REPORT="domain_health_report.txt"
 
                     {
