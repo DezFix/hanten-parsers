@@ -44,6 +44,15 @@ public abstract class MangaLoaderContext {
 	 * Execute JavaScript code and return result
 	 * @param script JavaScript source code
 	 * @param baseUrl url of page script will be executed in context of
+	 * @return execution result as string, may be null
+	 */
+	public open suspend fun evaluateJs(baseUrl: String, script: String): String? =
+		evaluateJs(baseUrl, script, 30000L)
+
+	/**
+	 * Execute JavaScript code and return result
+	 * @param script JavaScript source code
+	 * @param baseUrl url of page script will be executed in context of
 	 * @param timeout maximum waiting time
 	 * @return execution result as string, may be null
 	 */
