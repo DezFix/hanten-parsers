@@ -1,6 +1,7 @@
 package hanten.wre.app.parsers.site.mangareader.ar
 
 import org.jsoup.nodes.Document
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.model.*
@@ -9,6 +10,7 @@ import hanten.wre.app.parsers.site.mangareader.MangaReaderParser
 import hanten.wre.app.parsers.util.*
 import java.text.SimpleDateFormat
 
+@Broken
 @MangaSourceParser("NORMOYUN", "MangaSwat", "ar")
 internal class Normoyun(context: MangaLoaderContext) :
 	MangaReaderParser(context, MangaParserSource.NORMOYUN, "swatscans.com", pageSize = 42, searchPageSize = 39) {

@@ -2,6 +2,7 @@ package hanten.wre.app.parsers.site.mangabox.en
 
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
@@ -16,6 +17,7 @@ import hanten.wre.app.parsers.site.mangabox.MangaboxParser
 import hanten.wre.app.parsers.util.*
 import java.util.*
 
+@Broken
 @MangaSourceParser("MANGAIRO", "MangaIro", "en")
 internal class Mangairo(context: MangaLoaderContext) :
 	MangaboxParser(context, MangaParserSource.MANGAIRO) {

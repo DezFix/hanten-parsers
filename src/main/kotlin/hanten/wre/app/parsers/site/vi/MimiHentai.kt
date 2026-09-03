@@ -25,7 +25,7 @@ internal class MimiHentai(context: MangaLoaderContext) :
 
 	private val apiSuffix = "api/v2/manga"
 	override val configKeyDomain = ConfigKey.Domain("mimihentai.com", "hentaihvn.com")
-	override val userAgentKey = ConfigKey.UserAgent(UserAgents.FUTON)
+	override val userAgentKey = ConfigKey.UserAgent(UserAgents.KOTATSU)
 
 	override suspend fun getFavicons(): Favicons {
 		return Favicons(

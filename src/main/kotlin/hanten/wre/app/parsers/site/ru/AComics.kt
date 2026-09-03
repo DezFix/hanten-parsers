@@ -10,8 +10,10 @@ import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.core.PagedMangaParser
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
+import hanten.wre.app.parsers.Broken
 import java.util.*
 
+@Broken
 @MangaSourceParser("ACOMICS", "AComics", "ru", ContentType.COMICS)
 internal class AComics(context: MangaLoaderContext) :
     PagedMangaParser(context, MangaParserSource.ACOMICS, pageSize = 10) {

@@ -29,13 +29,13 @@ body:
             required: false
 
     -   type: input
-        id: futon-version
+        id: kotatsu-version
         attributes:
-            label: Futon version
+            label: Kotatsu version
             description: |
-                You can find your Futon version in **Settings → About**.
+                You can find your Kotatsu version in **Settings → About**.
             placeholder: |
-                Example: "2.0.0"
+                Example: "3.3"
         validations:
             required: true
 

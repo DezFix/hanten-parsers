@@ -1,6 +1,9 @@
-package hanten.wre.app.parsers.util
+package hanten.wre.app.core.parser
 
 import org.jsoup.nodes.Element
+import hanten.wre.app.parsers.util.attrOrNull
+import hanten.wre.app.parsers.util.nullIfEmpty
+import hanten.wre.app.parsers.util.splitByWhitespace
 
 /**
  * Utility class for parsing the `background` property of css

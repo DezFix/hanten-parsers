@@ -1,5 +1,6 @@
 package hanten.wre.app.parsers.site.pt
 
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
@@ -9,6 +10,7 @@ import hanten.wre.app.parsers.network.UserAgents
 import hanten.wre.app.parsers.util.*
 import java.util.*
 
+@Broken
 @MangaSourceParser("BRMANGAS", "BrMangas", "pt")
 internal class BrMangas(context: MangaLoaderContext) : PagedMangaParser(context, MangaParserSource.BRMANGAS, 25) {
 

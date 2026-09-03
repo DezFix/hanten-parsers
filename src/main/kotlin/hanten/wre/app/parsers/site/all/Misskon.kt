@@ -8,7 +8,7 @@ import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
 import java.util.*
 
-@MangaSourceParser("MISSKON", "MissKon", type = ContentType.HENTAI)
+@MangaSourceParser("MISSKON", "MissKon", type = ContentType.OTHER)
 internal class Misskon(context: MangaLoaderContext) : PagedMangaParser(context, MangaParserSource.MISSKON, 24) {
 
     override val configKeyDomain = ConfigKey.Domain("misskon.com")

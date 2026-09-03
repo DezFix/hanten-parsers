@@ -9,10 +9,9 @@ import hanten.wre.app.parsers.model.MangaTag
 import hanten.wre.app.parsers.site.zeistmanga.ZeistMangaParser
 import hanten.wre.app.parsers.util.*
 
-@Broken
 @MangaSourceParser("MIKOROKU", "Mikoroku", "id", ContentType.HENTAI)
 internal class Mikoroku(context: MangaLoaderContext) :
-	ZeistMangaParser(context, MangaParserSource.MIKOROKU, "www.mikoroku.web.id") {
+	ZeistMangaParser(context, MangaParserSource.MIKOROKU, "www.mikoroku.com") {
 
 	override suspend fun fetchAvailableTags(): Set<MangaTag> {
 		val doc = webClient.httpGet("https://$domain").parseHtml()

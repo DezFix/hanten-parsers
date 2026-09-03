@@ -1,10 +1,18 @@
 package hanten.wre.app.parsers.site.madara.en
 
+import okhttp3.Headers
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
+import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.model.MangaParserSource
 import hanten.wre.app.parsers.site.madara.MadaraParser
 
 @MangaSourceParser("KUNMANGA", "KunManga", "en")
 internal class KunManga(context: MangaLoaderContext) :
-	MadaraParser(context, MangaParserSource.KUNMANGA, "kunmanga.com", 10)
+    MadaraParser(context, MangaParserSource.KUNMANGA, "kunmanga.com", 10) {
+    override val withoutAjax = true
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(ConfigKey.InterceptCloudflare(defaultValue = true))
+    }
+}

@@ -1,6 +1,8 @@
 package hanten.wre.app.parsers.site.tr
 
 import org.json.JSONArray
+import org.jsoup.nodes.Document
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
@@ -11,12 +13,13 @@ import hanten.wre.app.parsers.util.json.*
 import java.text.SimpleDateFormat
 import java.util.*
 
+@Broken
 @MangaSourceParser("ELDERMANGA", "Elder Manga", "tr")
 internal class ElderManga(context: MangaLoaderContext):
     PagedMangaParser(context, MangaParserSource.ELDERMANGA, 25) {
 
     override val configKeyDomain = ConfigKey.Domain("eldermanga.com")
-    private val cdnSuffix = "cdn1.$domain"
+    private val cdnSuffix = "https://eldermangacdn2.efsaneler.can.re"
 
     override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
@@ -110,7 +113,7 @@ internal class ElderManga(context: MangaLoaderContext):
             )
         }
 
-        val doc = webClient.httpGet(url).parseHtml()
+        val doc = loadSiteDocument(url)
         return doc.select("section[aria-label='series area'] .card").map { card ->
             val href = card.selectFirstOrThrow("a").attrAsRelativeUrl("href")
             Manga(
@@ -131,7 +134,7 @@ internal class ElderManga(context: MangaLoaderContext):
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
-        val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
+        val doc = loadSiteDocument(manga.url.toAbsoluteUrl(domain))
         val statusText = doc.selectFirst("span:contains(Durum) + span")?.text().orEmpty()
         return manga.copy(
             tags = doc.select("a[href^='search?categories']").mapToSet {
@@ -155,7 +158,7 @@ internal class ElderManga(context: MangaLoaderContext):
                 MangaChapter(
                     id = generateUid(href),
                     title = el.selectFirstOrThrow("h3").text(),
-                    number = (i + 1).toFloat(), 
+                    number = (i + 1).toFloat(),
                     volume = 0,
                     url = href,
                     scanlator = null,
@@ -168,15 +171,15 @@ internal class ElderManga(context: MangaLoaderContext):
     }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
+        val doc = loadSiteDocument(chapter.url.toAbsoluteUrl(domain))
         val pageRegex = Regex("\\\\\"path\\\\\":\\\\\"([^\"]+)\\\\\"")
         val script = doc.select("script").find { it.html().contains(pageRegex) }?.html() ?: return emptyList()
         return pageRegex.findAll(script).mapNotNull { result ->
             result.groups[1]?.value?.let { url ->
                 MangaPage(
                     id = generateUid(url),
-                    url = "https://$cdnSuffix/upload/series/$url",
-                    preview = null, 
+                    url = "${cdnSuffix.trimEnd('/')}/$url",
+                    preview = null,
                     source = source,
                 )
             }
@@ -184,21 +187,24 @@ internal class ElderManga(context: MangaLoaderContext):
     }
 
     private suspend fun fetchTags(): Set<MangaTag> {
-        val doc = webClient.httpGet("https://$domain/search").parseHtml()
-        val script = doc.select("script").find { it.html().contains("self.__next_f.push([1,\"10:[\\\"\\$,\\\"section") }?.html() 
+        val doc = loadSiteDocument("https://$domain/search")
+        val script = doc.select("script").find { it.html().contains("self.__next_f.push([1,\"10:[\\\"\\$,\\\"section") }?.html()
             ?: return emptySet()
-        
+
         val jsonStr = script.substringAfter("\"category\":[")
             .substringBefore("],\"searchParams\":{}")
             .replace("\\", "")
-        
+
         val jsonArray = JSONArray("[$jsonStr]")
         return jsonArray.mapJSONToSet { jo ->
             MangaTag(
-                key = jo.getString("id"), 
+                key = jo.getString("id"),
                 title = jo.getString("name"),
                 source = source
             )
         }
     }
+
+    private suspend fun loadSiteDocument(url: String): Document =
+        webClient.httpGet(url).parseHtml()
 }

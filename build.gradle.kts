@@ -1,4 +1,4 @@
-﻿import tasks.ReportGenerateTask
+import tasks.ReportGenerateTask
 
 plugins {
     `java-library`
@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "hanten.wre"
-version = "2.0.0"
+version = "1.0"
 
 tasks.test {
     useJUnitPlatform()
@@ -30,7 +30,7 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
 }
 
 kotlin {
-    jvmToolchain(8)
+    jvmToolchain(17)
     explicitApiWarning()
     sourceSets["main"].kotlin.srcDirs("build/generated/ksp/main/kotlin")
 }
@@ -62,4 +62,3 @@ dependencies {
 }
 
 tasks.register<ReportGenerateTask>("generateTestsReport")
-

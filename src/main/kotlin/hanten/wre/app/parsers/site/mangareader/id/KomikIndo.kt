@@ -6,16 +6,14 @@ import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.site.mangareader.MangaReaderParser
 import hanten.wre.app.parsers.util.*
-import hanten.wre.app.parsers.Broken
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.EnumSet
 
-@Broken
-@MangaSourceParser("KOMIKINDO_MOE", "KomikIndo.org", "id", ContentType.HENTAI)
+@MangaSourceParser("KOMIKINDO_CH", "KomikIndo.ch", "id")
 internal class KomikIndo(context: MangaLoaderContext) :
-	MangaReaderParser(context, MangaParserSource.KOMIKINDO_MOE, "komikindo.ch", pageSize = 30, searchPageSize = 30) {
+	MangaReaderParser(context, MangaParserSource.KOMIKINDO_CH, "komikindo.ch", pageSize = 30, searchPageSize = 30) {
 
 	override val listUrl = "/daftar-manga"
 	override val selectMangaList = "div.animepost"

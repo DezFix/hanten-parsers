@@ -1,5 +1,6 @@
 package hanten.wre.app.parsers.site.mangareader.pt
 
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.model.MangaListFilterCapabilities
@@ -8,6 +9,7 @@ import hanten.wre.app.parsers.site.mangareader.MangaReaderParser
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
 
+@Broken
 @MangaSourceParser("SSSSCANLATOR", "YomuComics", "pt")
 internal class SssScanlator(context: MangaLoaderContext) :
 	MangaReaderParser(context, MangaParserSource.SSSSCANLATOR, "yomucomics.com", pageSize = 20, searchPageSize = 10) {

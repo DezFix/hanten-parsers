@@ -1,17 +1,36 @@
 package hanten.wre.app.parsers.site.mangareader.en
 
+import okhttp3.HttpUrl
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
+import hanten.wre.app.parsers.model.Manga
 import hanten.wre.app.parsers.model.MangaListFilterCapabilities
 import hanten.wre.app.parsers.model.MangaParserSource
 import hanten.wre.app.parsers.site.mangareader.MangaReaderParser
+import hanten.wre.app.parsers.util.LinkResolver
+import hanten.wre.app.parsers.util.generateUid
+import hanten.wre.app.parsers.util.nullIfEmpty
 
 @MangaSourceParser("RAVENSCANS", "RavenScans", "en")
 internal class RavenScans(context: MangaLoaderContext) :
-	MangaReaderParser(context, MangaParserSource.RAVENSCANS, "ravenscans.com", pageSize = 10, searchPageSize = 10) {
+	// Must be .net: the old .org host 301s everything across and rewrites
+	// /series into /manga on the way, which .net then answers with a 404 — so
+	// going through it defeats the listUrl below no matter what it is set to.
+	MangaReaderParser(context, MangaParserSource.RAVENSCANS, "ravenscans.net", pageSize = 10, searchPageSize = 10) {
+	// The site lists and links titles under /series; /manga is a 404 here.
+	override val listUrl = "/series"
 	override val datePattern = "MMM d, yyyy"
 	override val filterCapabilities: MangaListFilterCapabilities
 		get() = super.filterCapabilities.copy(
 			isTagsExclusionSupported = false,
 		)
+
+	// The base implementation hardcodes /manga/, which would resolve every
+	// shared link to a 404 here — and to an id that never matches the one the
+	// listing produced from the site's own href.
+	override suspend fun resolveLink(resolver: LinkResolver, link: HttpUrl): Manga? {
+		val mangaSlug = link.pathSegments.getOrNull(1)?.nullIfEmpty() ?: return null
+		val url = "$listUrl/$mangaSlug/"
+		return resolver.resolveManga(this, url, generateUid(url))
+	}
 }

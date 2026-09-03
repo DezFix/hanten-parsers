@@ -3,6 +3,7 @@ package hanten.wre.app.parsers.site.be
 import androidx.collection.ArraySet
 import org.json.JSONArray
 import org.json.JSONObject
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
@@ -18,6 +19,7 @@ import hanten.wre.app.parsers.util.nullIfEmpty
 import hanten.wre.app.parsers.util.toAbsoluteUrl
 import java.util.*
 
+@Broken
 @MangaSourceParser("ANIBEL", "Anibel", "be")
 internal class AnibelParser(context: MangaLoaderContext) : AbstractMangaParser(context, MangaParserSource.ANIBEL) {
 

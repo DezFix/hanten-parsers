@@ -9,4 +9,5 @@ import hanten.wre.app.parsers.site.madara.MadaraParser
 internal class Mangaclash(context: MangaLoaderContext) :
 	MadaraParser(context, MangaParserSource.MANGACLASH, "toonclash.com", pageSize = 18) {
 	override val datePattern = "MM/dd/yyyy"
+    override val withoutAjax = true
 }

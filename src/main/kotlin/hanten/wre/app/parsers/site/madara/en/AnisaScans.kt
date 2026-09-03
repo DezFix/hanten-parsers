@@ -2,6 +2,7 @@ package hanten.wre.app.parsers.site.madara.en
 
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
+import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.model.MangaParserSource
 import hanten.wre.app.parsers.site.madara.MadaraParser
 
@@ -9,4 +10,8 @@ import hanten.wre.app.parsers.site.madara.MadaraParser
 internal class AnisaScans(context: MangaLoaderContext) :
 	MadaraParser(context, MangaParserSource.ANISASCANS, "anisascans.in", 36) {
 	override val datePattern = "dd MMM, yyyy"
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(ConfigKey.InterceptCloudflare(defaultValue = true))
+    }
 }

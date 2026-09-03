@@ -3,8 +3,10 @@ package hanten.wre.app.parsers.site.madara.pt
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import okhttp3.Protocol
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.model.ContentRating
@@ -13,6 +15,7 @@ import hanten.wre.app.parsers.model.MangaChapter
 import hanten.wre.app.parsers.model.MangaParserSource
 import hanten.wre.app.parsers.model.MangaState
 import hanten.wre.app.parsers.model.RATING_UNKNOWN
+import hanten.wre.app.parsers.network.OkHttpWebClient
 import hanten.wre.app.parsers.site.madara.MadaraParser
 import hanten.wre.app.parsers.util.attrAsRelativeUrl
 import hanten.wre.app.parsers.util.generateUid
@@ -24,6 +27,7 @@ import hanten.wre.app.parsers.util.textOrNull
 import hanten.wre.app.parsers.util.toAbsoluteUrl
 import java.text.SimpleDateFormat
 
+@Broken
 @MangaSourceParser("HUNTERSSCAN", "HuntersScan", "pt")
 internal class HuntersScan(context: MangaLoaderContext) :
 	MadaraParser(context, MangaParserSource.HUNTERSSCAN, "readhunters.xyz", pageSize = 50) {
@@ -31,6 +35,17 @@ internal class HuntersScan(context: MangaLoaderContext) :
 	override val datePattern = "dd/MM/yyyy"
 	override val tagPrefix = "series-genre/"
 	override val listUrl = "series/"
+
+	// Custom HTTP/1.1 client to fix 421 SNI mismatch error
+	private val http11Client = context.httpClient.newBuilder()
+		.protocols(listOf(Protocol.HTTP_1_1))
+		.build()
+
+	// Custom webClient using HTTP/1.1
+	private val http11WebClient = OkHttpWebClient(
+		httpClient = http11Client,
+		mangaSource = source
+	)
 
 	override suspend fun getChapters(manga: Manga, doc: Document): List<MangaChapter> {
 		return fetchAllChapters(manga)
@@ -59,8 +74,8 @@ internal class HuntersScan(context: MangaLoaderContext) :
 		val baseUrl = "${manga.url.toAbsoluteUrl(domain).removeSuffix('/')}/ajax/chapters/?t="
 		val dateFormat = SimpleDateFormat(datePattern, sourceLocale)
 
-		// Fetch first page
-		val firstPageDoc = webClient.httpPost(baseUrl + "1", emptyMap()).parseHtml()
+		// Fetch first page using HTTP/1.1 client
+		val firstPageDoc = http11WebClient.httpPost(baseUrl + "1", emptyMap()).parseHtml()
 		val totalPages = extractTotalPages(firstPageDoc)
 		val firstPageChapters = firstPageDoc.select(selectChapter).map { parseChapterElement(it, dateFormat) }
 
@@ -70,12 +85,12 @@ internal class HuntersScan(context: MangaLoaderContext) :
 			}
 		}
 
-		// Fetch remaining pages concurrently
+		// Fetch remaining pages concurrently using HTTP/1.1 client
 		val remainingPagesChapters = (2..totalPages).chunked(10).flatMap { batch ->
 			batch.map { page ->
 				async {
 					try {
-						val doc = webClient.httpPost(baseUrl + page, emptyMap()).parseHtml()
+						val doc = http11WebClient.httpPost(baseUrl + page, emptyMap()).parseHtml()
 						doc.select(selectChapter).map {
 							parseChapterElement(it, dateFormat)
 						}

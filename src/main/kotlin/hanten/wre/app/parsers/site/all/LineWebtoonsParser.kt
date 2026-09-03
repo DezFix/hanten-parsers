@@ -5,6 +5,7 @@ import kotlinx.coroutines.coroutineScope
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
@@ -289,24 +290,31 @@ internal abstract class LineWebtoonsParser(
 		return builder.build()
 	}
 
+	@Broken
 	@MangaSourceParser("LINEWEBTOONS_EN", "LineWebtoons English", "en", type = ContentType.MANGA)
 	class English(context: MangaLoaderContext) : LineWebtoonsParser(context, MangaParserSource.LINEWEBTOONS_EN)
 
+	@Broken
 	@MangaSourceParser("LINEWEBTOONS_ZH", "LineWebtoons Chinese", "zh", type = ContentType.MANGA)
 	class Chinese(context: MangaLoaderContext) : LineWebtoonsParser(context, MangaParserSource.LINEWEBTOONS_ZH)
 
+	@Broken
 	@MangaSourceParser("LINEWEBTOONS_TH", "LineWebtoons Thai", "th", type = ContentType.MANGA)
 	class Thai(context: MangaLoaderContext) : LineWebtoonsParser(context, MangaParserSource.LINEWEBTOONS_TH)
 
+	@Broken
 	@MangaSourceParser("LINEWEBTOONS_ID", "LineWebtoons Indonesian", "id", type = ContentType.MANGA)
 	class Indonesian(context: MangaLoaderContext) : LineWebtoonsParser(context, MangaParserSource.LINEWEBTOONS_ID)
 
+	@Broken
 	@MangaSourceParser("LINEWEBTOONS_ES", "LineWebtoons Spanish", "es", type = ContentType.MANGA)
 	class Spanish(context: MangaLoaderContext) : LineWebtoonsParser(context, MangaParserSource.LINEWEBTOONS_ES)
 
+	@Broken
 	@MangaSourceParser("LINEWEBTOONS_FR", "LineWebtoons French", "fr", type = ContentType.MANGA)
 	class French(context: MangaLoaderContext) : LineWebtoonsParser(context, MangaParserSource.LINEWEBTOONS_FR)
 
+	@Broken
 	@MangaSourceParser("LINEWEBTOONS_DE", "LineWebtoons German", "de", type = ContentType.MANGA)
 	class German(context: MangaLoaderContext) : LineWebtoonsParser(context, MangaParserSource.LINEWEBTOONS_DE)
 

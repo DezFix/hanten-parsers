@@ -1,5 +1,6 @@
 package hanten.wre.app.parsers.site.es
 
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
@@ -8,6 +9,7 @@ import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
 import java.util.*
 
+@Broken("Redirect to DragonTranslation.org source")
 @MangaSourceParser("DRAGONTRANSLATION", "Dragon Translation", "es")
 internal class DragonTranslationParser(context: MangaLoaderContext) :
     PagedMangaParser(context, MangaParserSource.DRAGONTRANSLATION, 30) {

@@ -13,11 +13,12 @@ import java.util.*
 internal class SadScans(context: MangaLoaderContext) :
 	SinglePageMangaParser(context, MangaParserSource.SADSCANS) {
 
-	override val configKeyDomain = ConfigKey.Domain("sadscans.net")
+	override val configKeyDomain = ConfigKey.Domain("sadscans.com")
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
 		keys.add(userAgentKey)
+		keys.add(ConfigKey.InterceptCloudflare(defaultValue = true))
 	}
 
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.ALPHABETICAL)
@@ -34,7 +35,7 @@ internal class SadScans(context: MangaLoaderContext) :
 		val url = buildString {
 			append("https://")
 			append(domain)
-			append("/seriler")
+			append("/series")
 			filter.query?.let {
 				append("?search=")
 				append(filter.query.urlEncoded())

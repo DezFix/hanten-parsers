@@ -2,6 +2,7 @@ package hanten.wre.app.parsers.site.fr
 
 import org.json.JSONObject
 import org.jsoup.nodes.Document
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
@@ -32,6 +33,7 @@ import java.util.EnumSet
 import java.util.Locale
 import java.util.TimeZone
 
+@Broken("The source to change structure")
 @MangaSourceParser("POSEIDONSCANS", "Poseidon Scans", "fr")
 internal class PoseidonScans(context: MangaLoaderContext) :
 	SinglePageMangaParser(context, MangaParserSource.POSEIDONSCANS) {

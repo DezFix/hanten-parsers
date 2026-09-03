@@ -37,7 +37,7 @@ internal class OTruyenParser(context: MangaLoaderContext) :
 
 	override val configKeyDomain = ConfigKey.Domain("otruyenapi.com")
 
-	override val userAgentKey = ConfigKey.UserAgent(UserAgents.FUTON)
+	override val userAgentKey = ConfigKey.UserAgent(UserAgents.KOTATSU)
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)

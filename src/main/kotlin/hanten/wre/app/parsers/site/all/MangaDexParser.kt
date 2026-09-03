@@ -19,6 +19,7 @@ import hanten.wre.app.parsers.model.search.QueryCriteria.*
 import hanten.wre.app.parsers.model.search.SearchCapability
 import hanten.wre.app.parsers.model.search.SearchableField
 import hanten.wre.app.parsers.model.search.SearchableField.*
+import hanten.wre.app.parsers.network.UserAgents
 import hanten.wre.app.parsers.util.*
 import hanten.wre.app.parsers.util.json.*
 import java.text.SimpleDateFormat
@@ -37,6 +38,8 @@ private const val SERVER_DATA_SAVER = "data-saver"
 internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser(context, MangaParserSource.MANGADEX) {
 
 	override val configKeyDomain = ConfigKey.Domain("mangadex.org")
+
+	override val userAgentKey = ConfigKey.UserAgent(UserAgents.KOTATSU)
 
 	private val preferredServerKey = ConfigKey.PreferredImageServer(
 		presetValues = mapOf(

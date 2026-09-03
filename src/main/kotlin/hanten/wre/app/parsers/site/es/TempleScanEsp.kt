@@ -10,10 +10,12 @@ import hanten.wre.app.parsers.network.UserAgents
 import hanten.wre.app.parsers.util.*
 import hanten.wre.app.parsers.util.json.getStringOrNull
 import hanten.wre.app.parsers.util.json.mapJSON
+import hanten.wre.app.parsers.Broken
 import java.text.DateFormat
 import java.text.SimpleDateFormat
 import java.util.*
 
+@Broken
 @MangaSourceParser("TEMPLESCANESP", "TempleScanEsp", "es", ContentType.HENTAI)
 internal class TempleScanEsp(context: MangaLoaderContext) :
 	SinglePageMangaParser(context, MangaParserSource.TEMPLESCANESP) {

@@ -5,11 +5,10 @@ import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.model.MangaListFilterCapabilities
 import hanten.wre.app.parsers.model.MangaParserSource
-import hanten.wre.app.parsers.model.ContentType
 import hanten.wre.app.parsers.site.mangareader.MangaReaderParser
 
 @Broken
-@MangaSourceParser("PORNHWASCANS", "PornhwaScans", "fr", type = ContentType.HENTAI)
+@MangaSourceParser("PORNHWASCANS", "PornhwaScans", "fr")
 internal class PornhwaScans(context: MangaLoaderContext) :
 	MangaReaderParser(context, MangaParserSource.PORNHWASCANS, "pornhwascans.fr", pageSize = 24, searchPageSize = 10) {
 	override val filterCapabilities: MangaListFilterCapabilities

@@ -7,9 +7,11 @@ import hanten.wre.app.parsers.core.PagedMangaParser
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.network.UserAgents
 import hanten.wre.app.parsers.util.*
+import hanten.wre.app.parsers.Broken
 import java.text.SimpleDateFormat
 import java.util.*
 
+@Broken("Original site closed")
 @MangaSourceParser("COMICEXTRA", "ComicExtra", "en", ContentType.COMICS)
 internal class ComicExtra(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.COMICEXTRA, 36) {

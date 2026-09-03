@@ -33,13 +33,22 @@ internal abstract class WebtoonsParser(
 	override val filterCapabilities: MangaListFilterCapabilities
 		get() = MangaListFilterCapabilities(
 			isSearchSupported = true,
+			// TAG is only ever offered to a parser through this flag, so without
+			// it neither the genres nor Canvas ever reach [getList] — the tag
+			// list was built and handled but never actually received. The site
+			// browses one genre at a time, so any extra tag is ignored.
+			isMultipleTagsSupported = true,
 		)
 
 	override val userAgentKey =
 		ConfigKey.UserAgent("Mozilla/5.0 (Linux; Android 12; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Mobile Safari/537.36")
 
 	override suspend fun getFilterOptions() = MangaListFilterOptions(
-		availableTags = availableTags(),
+		// Canvas (the reader-published section) is offered alongside the genres
+		// rather than as a separate switch: its listing ignores both genreTab
+		// and sortOrder, so it cannot be combined with a genre or an order
+		// anyway, and only one tag can be picked at a time here.
+		availableTags = availableTags() + MangaTag("Canvas", CANVAS_KEY, source),
 	)
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
@@ -58,8 +67,8 @@ internal abstract class WebtoonsParser(
 			else -> tag
 		}
 
-	private suspend fun fetchEpisodes(titleNo: Long): List<MangaChapter> {
-		val url = "https://$mobileApiDomain/api/v1/webtoon/$titleNo/episodes?pageSize=99999"
+	private suspend fun fetchEpisodes(titleNo: Long, type: String): List<MangaChapter> {
+		val url = "https://$mobileApiDomain/api/v1/$type/$titleNo/episodes?pageSize=99999"
 		val json = webClient.httpGet(url).parseJson()
 
 		val episodeList = json.optJSONObject("result")?.optJSONArray("episodeList")
@@ -126,7 +135,8 @@ internal abstract class WebtoonsParser(
 			else -> null
 		}
 
-		val chapters = async { fetchEpisodes(titleNo) }.await()
+		val type = if ("/canvas/" in detailsUrl) "canvas" else "webtoon"
+		val chapters = async { fetchEpisodes(titleNo, type) }.await()
 
 		Manga(
 			id = generateUid(titleNo),
@@ -187,6 +197,17 @@ internal abstract class WebtoonsParser(
 				webClient.httpGet(searchUrl).parseHtml()
 			}
 
+			filter.tags.any { it.key == CANVAS_KEY } -> {
+				// `/ranking/canvas` looks like the right url but silently serves
+				// the Originals ranking, and the desktop layout of this page
+				// carries only a handful of titles, so the mobile user agent the
+				// source declares has to be sent explicitly here.
+				webClient.httpGet(
+					"https://$domain/$languageCode/canvas",
+					getRequestHeaders(),
+				).parseHtml()
+			}
+
 			filter.tags.isNotEmpty() -> {
 				val selectedGenre = filter.tags.first()
 				val genreUrlPath = genreUrlMap[selectedGenre.key] ?: selectedGenre.key
@@ -209,8 +230,14 @@ internal abstract class WebtoonsParser(
 
 		val selectedGenreForManga = if (filter.tags.isNotEmpty()) filter.tags.first() else null
 
-		return document.select(".webtoon_list li a, .card_wrap .card_item a")
+		// webtoons serves a different layout per user agent and redirects between
+		// www/m to enforce it, so the Canvas listing has to be read from either
+		// the mobile (.webtoon_list) or the desktop (.discover_lst) markup.
+		return document.select(".webtoon_list li a, .card_wrap .card_item a, .discover_lst a.discover_item")
 			.map { element -> createMangaFromElement(element, source, selectedGenreForManga) }
+			// The Canvas page lays the same title out under several genre tabs,
+			// so the same entry can be matched more than once.
+			.distinctBy { it.id }
 			.drop(offset)
 			.take(20)
 	}
@@ -222,7 +249,7 @@ internal abstract class WebtoonsParser(
 	): Manga {
 		val href = element.absUrl("href")
 		val titleNo = extractTitleNoFromUrl(href)
-		val title = element.select(".title, .card_title").text()
+		val title = element.select(".title, .card_title, .subj").text()
 		val thumbnailUrl = element.select("img").attr("src")
 
 		return Manga(
@@ -241,6 +268,10 @@ internal abstract class WebtoonsParser(
 			state = null,
 			source = source,
 		)
+	}
+
+	private companion object {
+		private const val CANVAS_KEY = "canvas"
 	}
 
 	private fun extractTitleNoFromUrl(url: String): Long {

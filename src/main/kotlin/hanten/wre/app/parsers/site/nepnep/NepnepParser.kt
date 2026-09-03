@@ -294,7 +294,7 @@ internal abstract class NepnepParser(
 			.substringAfter("vm.CurPathName = \"", "")
 			.substringBefore('"')
 		check(host.isNotEmpty()) {
-			"Manga4Life is overloaded and blocking Futon right now. Wait for unblock."
+			"Manga4Life is overloaded and blocking Kotatsu right now. Wait for unblock."
 		}
 		val titleURI = script.substringAfter("vm.IndexName = \"").substringBefore("\"")
 		val seasonURI = curChapter.getString("Directory")!!.let { if (it.isEmpty()) "" else "$it/" }

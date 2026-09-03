@@ -25,7 +25,7 @@ internal class Hentalk(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.HENTALK, 24) {
 
 	override val configKeyDomain = ConfigKey.Domain("hentalk.pw", "fakku.cc")
-	override val userAgentKey = ConfigKey.UserAgent(UserAgents.FUTON)
+	override val userAgentKey = ConfigKey.UserAgent(UserAgents.KOTATSU)
 
 	private val preferredServerKey = ConfigKey.PreferredImageServer(
 		presetValues = mapOf(

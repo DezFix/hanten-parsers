@@ -1,19 +1,15 @@
 package hanten.wre.app.parsers.site.all
 
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
+import okhttp3.Request
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Document
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaParserAuthProvider
 import hanten.wre.app.parsers.MangaSourceParser
-import hanten.wre.app.parsers.bitmap.Rect
 import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.core.PagedMangaParser
-import hanten.wre.app.parsers.model.ContentRating
+import hanten.wre.app.parsers.model.ContentType
+import hanten.wre.app.parsers.model.Demographic
 import hanten.wre.app.parsers.model.Manga
 import hanten.wre.app.parsers.model.MangaChapter
 import hanten.wre.app.parsers.model.MangaListFilter
@@ -26,724 +22,599 @@ import hanten.wre.app.parsers.model.MangaTag
 import hanten.wre.app.parsers.model.RATING_UNKNOWN
 import hanten.wre.app.parsers.model.SortOrder
 import hanten.wre.app.parsers.network.OkHttpWebClient
-import hanten.wre.app.parsers.network.WebClient
-import hanten.wre.app.parsers.util.attrAsAbsoluteUrl
-import hanten.wre.app.parsers.util.attrAsRelativeUrl
 import hanten.wre.app.parsers.util.generateUid
-import hanten.wre.app.parsers.util.getCookies
-import hanten.wre.app.parsers.util.mapChapters
-import hanten.wre.app.parsers.util.mapNotNullToSet
-import hanten.wre.app.parsers.util.nullIfEmpty
-import hanten.wre.app.parsers.util.ownTextOrNull
-import hanten.wre.app.parsers.util.parseFailed
-import hanten.wre.app.parsers.util.parseHtml
 import hanten.wre.app.parsers.util.parseJson
-import hanten.wre.app.parsers.util.parseSafe
-import hanten.wre.app.parsers.util.selectFirstOrThrow
-import hanten.wre.app.parsers.util.splitByWhitespace
-import hanten.wre.app.parsers.util.suspendlazy.suspendLazy
-import hanten.wre.app.parsers.util.toAbsoluteUrl
-import hanten.wre.app.parsers.util.toTitleCase
-import hanten.wre.app.parsers.util.urlEncoded
-import java.text.SimpleDateFormat
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
-import java.util.Base64
 import java.util.EnumSet
-import java.util.Locale
-import javax.net.ssl.SSLContext
-import javax.net.ssl.SSLSocketFactory
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
-import kotlin.math.min
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
-private const val PIECE_SIZE = 200
-private const val MIN_SPLIT_COUNT = 5
-
-@Suppress("CustomX509TrustManager")
 internal abstract class MangaFireParser(
-	context: MangaLoaderContext,
-	source: MangaParserSource,
-	private val siteLang: String,
-) : PagedMangaParser(context, source, 30), Interceptor, MangaParserAuthProvider {
+    context: MangaLoaderContext,
+    source: MangaParserSource,
+    private val siteLang: String,
+    // Matches the `limit` sent to /api/titles, so the paginator's first guess
+    // for page 2 lines up with what the API actually returns.
+) : PagedMangaParser(context, source, 50), Interceptor, MangaParserAuthProvider {
 
-    private val client: WebClient by lazy {
+    override val configKeyDomain = ConfigKey.Domain("mangafire.to")
+
+    // [userAgentKey] defaults to the device's own user agent, which is what the site
+    // is served for anyway; registering it here is only what puts the row on the
+    // source's settings screen so it can be overridden.
+    override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
+        super.onCreateConfig(keys)
+        keys.add(userAgentKey)
+    }
+
+    override val availableSortOrders: Set<SortOrder> = EnumSet.of(
+        SortOrder.UPDATED, // chapter update
+        SortOrder.POPULARITY, // most views
+        SortOrder.RATING, // rating score
+        SortOrder.NEWEST, // created manga
+        SortOrder.ALPHABETICAL, // title asc
+        SortOrder.RELEVANCE, // relevance sc
+        SortOrder.POPULARITY_WEEK,
+        SortOrder.POPULARITY_MONTH,
+    )
+
+    private val apiClient by lazy {
         val newHttpClient = context.httpClient.newBuilder()
-            .sslSocketFactory(SSLUtils.sslSocketFactory!!, SSLUtils.trustManager)
-            .hostnameVerifier { _, _ -> true }
             .addInterceptor { chain ->
-                val request = chain.request()
-                val response = chain.proceed(request.newBuilder()
-                    .addHeader("Referer", "https://$domain/")
-                    .build())
-
-                if (request.url.fragment?.startsWith("scrambled") == true) {
-                    return@addInterceptor context.redrawImageResponse(response) { bitmap ->
-                        val offset = request.url.fragment!!.substringAfter("_").toInt()
-                        val width = bitmap.width
-                        val height = bitmap.height
-
-                        val result = context.createBitmap(width, height)
-
-                        val pieceWidth = min(PIECE_SIZE, width.ceilDiv(MIN_SPLIT_COUNT))
-                        val pieceHeight = min(PIECE_SIZE, height.ceilDiv(MIN_SPLIT_COUNT))
-                        val xMax = width.ceilDiv(pieceWidth) - 1
-                        val yMax = height.ceilDiv(pieceHeight) - 1
-
-                        for (y in 0..yMax) {
-                            for (x in 0..xMax) {
-                                val xDst = pieceWidth * x
-                                val yDst = pieceHeight * y
-                                val w = min(pieceWidth, width - xDst)
-                                val h = min(pieceHeight, height - yDst)
-
-                                val xSrc = pieceWidth * when (x) {
-                                    xMax -> x // margin
-                                    else -> (xMax - x + offset) % xMax
-                                }
-                                val ySrc = pieceHeight * when (y) {
-                                    yMax -> y // margin
-                                    else -> (yMax - y + offset) % yMax
-                                }
-
-                                val srcRect = Rect(xSrc, ySrc, xSrc + w, ySrc + h)
-                                val dstRect = Rect(xDst, yDst, xDst + w, yDst + h)
-
-                                result.drawBitmap(bitmap, srcRect, dstRect)
-                            }
-                        }
-
-                        result
-                    }
-                }
-
-                response
+                val request = chain.request().newBuilder()
+                    .header("Referer", "https://$domain/")
+                    .header("Accept", "application/json")
+                    .build()
+                chain.proceed(signApiRequest(request))
             }
             .build()
         OkHttpWebClient(newHttpClient, source)
     }
 
-	override val configKeyDomain: ConfigKey.Domain = ConfigKey.Domain("mangafire.to")
+    /**
+     * Every `/api/` endpoint answers an unsigned request with `403 {"message":
+     * "Missing token."}`, so each call has to carry a `vrf` parameter.
+     *
+     * The signature is computed over a canonical form of the request: the path
+     * without its `/api` prefix, followed by the query sorted by parameter name
+     * with the *decoded* values, and with repeated `key[]` parameters expanded
+     * to `key[0]`, `key[1]`, … in the order they were added. The query is then
+     * re-emitted in that same sorted order alongside the signature.
+     */
+    private fun signApiRequest(request: Request): Request {
+        val url = request.url
+        if (!url.encodedPath.startsWith("/api/")) {
+            return request
+        }
 
-	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
-		SortOrder.UPDATED,
-		SortOrder.POPULARITY,
-		SortOrder.RATING,
-		SortOrder.NEWEST,
-		SortOrder.ALPHABETICAL,
-		SortOrder.RELEVANCE,
-	)
+        // sortedBy is stable, so multiple values of one key keep their order.
+        val params = url.queryParameterNames
+            .flatMap { name -> url.queryParameterValues(name).map { name to it.orEmpty() } }
+            .sortedBy { it.first }
 
-	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
-		super.onCreateConfig(keys)
-		keys.add(userAgentKey)
-	}
-
-	override val authUrl: String
-		get() = "https://${domain}"
-
-	override suspend fun isAuthorized(): Boolean {
-		return context.cookieJar.getCookies(domain).any {
-			it.value.contains("user")
-		}
-	}
-
-	override suspend fun getUsername(): String {
-		val body = client.httpGet("https://${domain}/user/profile").parseHtml().body()
-		return body.selectFirst("form.ajax input[name*=username]")?.attr("value")
-			?: body.parseFailed("Cannot find username")
-	}
-
-	private val tags = suspendLazy(soft = true) {
-		client.httpGet("https://$domain/filter").parseHtml()
-			.select(".genres > li").map {
-				MangaTag(
-					title = it.selectFirstOrThrow("label").ownText().toTitleCase(sourceLocale),
-					key = it.selectFirstOrThrow("input").attr("value"),
-					source = source,
-				)
-			}.associateBy { it.title }
-	}
-
-	override val filterCapabilities: MangaListFilterCapabilities
-		get() = MangaListFilterCapabilities(
-			isMultipleTagsSupported = true,
-			isTagsExclusionSupported = true,
-			isSearchSupported = true,
-		)
-
-	override suspend fun getFilterOptions() = MangaListFilterOptions(
-		availableTags = tags.get().values.toSet(),
-		availableStates = EnumSet.of(
-			MangaState.ONGOING,
-			MangaState.FINISHED,
-			MangaState.ABANDONED,
-			MangaState.PAUSED,
-			MangaState.UPCOMING,
-		),
-	)
-
-	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-		val url = "https://$domain/filter".toHttpUrl().newBuilder().apply {
-			addQueryParameter("page", page.toString())
-			addQueryParameter("language[]", siteLang)
-
-            when {
-                !filter.query.isNullOrEmpty() -> {
-                    val encodedQuery = filter.query.splitByWhitespace().joinToString(separator = "+") { part ->
-                        part.urlEncoded()
+        val canonical = buildString {
+            append(url.encodedPath.removePrefix("/api"))
+            if (params.isNotEmpty()) {
+                append('?')
+                var lastKey = ""
+                var index = 0
+                params.joinTo(this, "&") { (key, value) ->
+                    val indexedKey = if (key.endsWith("[]")) {
+                        if (lastKey != key) {
+                            index = 0
+                        }
+                        lastKey = key
+                        key.replace("[]", "[${index++}]")
+                    } else {
+                        key
                     }
-                    addEncodedQueryParameter("keyword", encodedQuery)
-
-                    // Generate VRF for search query
-                    val searchVrf = VrfGenerator.generate(filter.query.trim())
-                    addQueryParameter("vrf", searchVrf)
-
-                    addQueryParameter(
-                        name = "sort",
-                        value = when (order) {
-                            SortOrder.UPDATED -> "recently_updated"
-                            SortOrder.POPULARITY -> "most_viewed"
-                            SortOrder.RATING -> "scores"
-                            SortOrder.NEWEST -> "release_date"
-                            SortOrder.ALPHABETICAL -> "title_az"
-                            SortOrder.RELEVANCE -> "most_relevance"
-                            else -> ""
-                        },
-                    )
+                    "$indexedKey=$value"
                 }
-
-				else -> {
-					filter.tagsExclude.forEach { tag ->
-						addQueryParameter("genre[]", "-${tag.key}")
-					}
-					filter.tags.forEach { tag ->
-						addQueryParameter("genre[]", tag.key)
-					}
-					filter.locale?.let {
-						addQueryParameter("language[]", it.language)
-					}
-					filter.states.forEach { state ->
-						addQueryParameter(
-							name = "status[]",
-							value = when (state) {
-								MangaState.ONGOING -> "releasing"
-								MangaState.FINISHED -> "completed"
-								MangaState.ABANDONED -> "discontinued"
-								MangaState.PAUSED -> "on_hiatus"
-								MangaState.UPCOMING -> "info"
-								else -> throw IllegalArgumentException("$state not supported")
-							},
-						)
-					}
-					addQueryParameter(
-						name = "sort",
-						value = when (order) {
-							SortOrder.UPDATED -> "recently_updated"
-							SortOrder.POPULARITY -> "most_viewed"
-							SortOrder.RATING -> "scores"
-							SortOrder.NEWEST -> "release_date"
-							SortOrder.ALPHABETICAL -> "title_az"
-							SortOrder.RELEVANCE -> "most_relevance"
-							else -> ""
-						},
-					)
-				}
-			}
-		}.build()
-
-		return client.httpGet(url)
-			.parseHtml().parseMangaList()
-	}
-
-	private fun Document.parseMangaList(): List<Manga> {
-		return select(".original.card-lg .unit .inner").map {
-			val a = it.selectFirstOrThrow(".info > a")
-			val mangaUrl = a.attrAsRelativeUrl("href")
-			Manga(
-				id = generateUid(mangaUrl),
-				url = mangaUrl,
-				publicUrl = mangaUrl.toAbsoluteUrl(domain),
-				title = a.ownText(),
-				coverUrl = it.selectFirstOrThrow("img").attrAsAbsoluteUrl("src"),
-				source = source,
-				altTitles = emptySet(),
-				largeCoverUrl = null,
-				authors = emptySet(),
-				contentRating = null,
-				rating = RATING_UNKNOWN,
-				state = null,
-				tags = emptySet(),
-			)
-		}
-	}
-
-	override suspend fun getDetails(manga: Manga): Manga {
-		val document = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
-		val availableTags = tags.get()
-		var isAdult = false
-		var isSuggestive = false
-		val author = document.select("div.meta a[href*=/author/]")
-			.joinToString { it.ownText() }.nullIfEmpty()
-
-		return manga.copy(
-			title = document.selectFirstOrThrow(".info > h1").ownText(),
-			altTitles = setOfNotNull(document.selectFirst(".info > h6")?.ownTextOrNull()),
-			rating = document.selectFirst("div.rating-box")?.attr("data-score")
-				?.toFloatOrNull()?.div(10) ?: RATING_UNKNOWN,
-			coverUrl = document.selectFirstOrThrow("div.manga-detail div.poster img")
-				.attrAsAbsoluteUrl("src"),
-			tags = document.select("div.meta a[href*=/genre/]").mapNotNullToSet {
-				val tag = it.ownText()
-				if (tag == "Hentai") {
-					isAdult = true
-				} else if (tag == "Ecchi") {
-					isSuggestive = true
-				}
-				availableTags[tag.toTitleCase(sourceLocale)]
-			},
-			contentRating = when {
-				isAdult -> ContentRating.ADULT
-				isSuggestive -> ContentRating.SUGGESTIVE
-				else -> ContentRating.SAFE
-			},
-			state = document.selectFirst(".info > p")?.ownText()?.let {
-				when (it.lowercase()) {
-					"releasing" -> MangaState.ONGOING
-					"completed" -> MangaState.FINISHED
-					"discontinued" -> MangaState.ABANDONED
-					"on_hiatus" -> MangaState.PAUSED
-					"info" -> MangaState.UPCOMING
-					else -> null
-				}
-			},
-			authors = setOfNotNull(author),
-			description = document.selectFirstOrThrow("#synopsis div.modal-content").html(),
-			chapters = getChapters(manga.url, document),
-		)
-	}
-
-	private data class ChapterBranch(
-		val type: String,
-		val langCode: String,
-		val langTitle: String,
-	)
-
-	private suspend fun getChapters(mangaUrl: String, document: Document): List<MangaChapter> {
-		val availableTypes = document.select(".chapvol-tab > a").map {
-			it.attr("data-name")
-		}
-		val langTypePairs = document.select(".m-list div.tab-content").flatMap {
-			val type = it.attr("data-name")
-
-			it.select(".list-menu .dropdown-item").map { item ->
-				ChapterBranch(
-					type = type,
-					langCode = item.attr("data-code").lowercase(),
-					langTitle = item.attr("data-title"),
-				)
-			}
-		}.filter {
-			it.langCode == siteLang && availableTypes.contains(it.type)
-		}
-
-		val id = mangaUrl.substringAfterLast('.')
-
-		return coroutineScope {
-			langTypePairs.map {
-				async {
-					getChaptersBranch(id, it)
-				}
-			}.awaitAll().flatten()
-		}
-	}
-
-    private suspend fun getChaptersBranch(mangaId: String, branch: ChapterBranch): List<MangaChapter> {
-        val readVrfInput = "$mangaId@${branch.type}@${branch.langCode}"
-        val readVrf = VrfGenerator.generate(readVrfInput)
-
-        val response = client
-            .httpGet("https://$domain/ajax/read/$mangaId/${branch.type}/${branch.langCode}?vrf=$readVrf")
-
-        val chapterElements = response.parseJson()
-            .getJSONObject("result")
-            .getString("html")
-            .let(Jsoup::parseBodyFragment)
-            .select("ul li a")
-
-		if (branch.type == "chapter") {
-			val doc = client
-				.httpGet("https://$domain/ajax/manga/$mangaId/${branch.type}/${branch.langCode}")
-				.parseJson()
-				.getString("result")
-				.let(Jsoup::parseBodyFragment)
-
-            doc.select("ul li a").withIndex().forEach { (i, it) ->
-                val date = it.select("span").getOrNull(1)?.ownText() ?: ""
-                chapterElements[i].attr("upload-date", date)
-                chapterElements[i].attr("other-title", it.attr("title"))
             }
         }
 
-        return chapterElements.mapChapters(reversed = true) { _, it ->
-            val chapterId = it.attr("data-id")
-            MangaChapter(
-                id = generateUid(it.attr("href")),
-                title = it.attr("title").ifBlank {
-                    "${branch.type.toTitleCase()} ${it.attr("data-number")}"
-                },
-                number = it.attr("data-number").toFloatOrNull() ?: -1f,
-                volume = it.attr("other-title").let { title ->
-                    volumeNumRegex.find(title)?.groupValues?.getOrNull(2)?.toInt() ?: 0
-                },
-                url = "$mangaId/${branch.type}/${branch.langCode}/$chapterId",
-                scanlator = null,
-                uploadDate = dateFormat.parseSafe(it.attr("upload-date")),
-                branch = "${branch.langTitle} ${branch.type.toTitleCase()}",
-                source = source,
+        val newUrl = url.newBuilder().query(null).apply {
+            params.forEach { (key, value) -> addQueryParameter(key, value) }
+            addQueryParameter("vrf", signVrf(canonical))
+        }.build()
+
+        return request.newBuilder().url(newUrl).build()
+    }
+
+    /** Three rounds of a keyed byte substitution, then base64url without padding. */
+    private fun signVrf(canonical: String): String {
+        var data = canonical.toByteArray(Charsets.UTF_8)
+        for ((table, key, iv) in vrfStages) {
+            data = vrfRound(data, table, key, iv)
+        }
+        return context.encodeBase64(data)
+            .replace('+', '-')
+            .replace('/', '_')
+            .trimEnd('=')
+    }
+
+    /**
+     * Each output byte is fed back in as the next byte's third operand, so the
+     * rounds are chained the same way a CBC-style stream would be.
+     */
+    private fun vrfRound(data: ByteArray, table: ByteArray, key: ByteArray, iv: Int): ByteArray {
+        val out = ByteArray(data.size)
+        var prev = iv
+        for (i in data.indices) {
+            val index = (data[i].toInt() xor key[i % key.size].toInt() xor prev) and 0xFF
+            prev = table[index].toInt() and 0xFF
+            out[i] = prev.toByte()
+        }
+        return out
+    }
+
+    private val vrfStages: List<Triple<ByteArray, ByteArray, Int>> by lazy {
+        listOf(
+            Triple(context.decodeBase64(VRF_TABLE_1), context.decodeBase64(VRF_KEY_1), 0x5A),
+            Triple(context.decodeBase64(VRF_TABLE_2), context.decodeBase64(VRF_KEY_2), 0x35),
+            Triple(context.decodeBase64(VRF_TABLE_3), context.decodeBase64(VRF_KEY_3), 0xBA),
+        )
+    }
+
+    override fun intercept(chain: Interceptor.Chain) = chain.proceed(
+        chain.request().newBuilder()
+            .header("Referer", "https://$domain/")
+            .build()
+    )
+
+    override val filterCapabilities = MangaListFilterCapabilities(
+        isMultipleTagsSupported = true,
+        isTagsExclusionSupported = true,
+        isSearchSupported = true,
+        isSearchWithFiltersSupported = true,
+        isYearRangeSupported = true,
+    )
+
+    companion object {
+        // Substitution tables (256 bytes each) and keys for the `vrf` signature,
+        // lifted verbatim from the site's own signing routine.
+        private const val VRF_TABLE_1 =
+            "yINlmUNho8VYJT+ibTIP+9ESiULpVEtMOoD6U6lRE0R/xwXo/Xp9NrUgC4cw/Lmo33vUyjUE40kUoEWIr/fxfNNcq2s79ShQ5NhNrFnJ4hXPwOu/SuXzIbuTQKGFvfm08E9jvCfqAtoDqvQq3dVWPQFmJjgvkISBeXY3BgANR+yVnjGbcxZ47d6kLNfZPIayTq3/YGySb1KuVZodWp/WGNAO5pfMcpaK53Hhs0allBszaMaxuouOwdxbwgxIw6YunSsXjI05Yi0j9j4eHKfSXR8Ifo/Od+8iamRfCXTyvm7NGRGYdcQ0ywcK/u6RXhrbcCm4t2eCtrDgQVecJGkQ+A=="
+        private const val VRF_KEY_1 = "0Ec58JOY3uBzJK9m3zqIOpdlF7UFiax9DmA="
+
+        private const val VRF_TABLE_2 =
+            "IUFltCxD3Oc2cwCgkJffthaOg9cgPUb0LgW6H/VtfcF0kc5F25t+aWj6JH9VOhOaY0rAFdUxlDnl5BLNvwEJvQtP5qcw7vdb/K+chnbwnspSHT8mz5lqwz41TezG0hkO06FTjJZhsyNuFLDpD2ZZxQj/QIRcF90zpmQ7Byu483WsQqUE0C342HL+JXngRB6fRzxRyVTaKu83h7UYTJ0QMt6ixFh6S3F8gqkKwrGTL3jHNBsD45UnifK8+RGtishQV2K3rujLKEkiZxpr2dYcudFW4oFsDKhad3CLBvuyTqsCo4B7mL5IKQ1vXo/MOOvq1I1d8ar9X6Ttu5KF4fZgiA=="
+        private const val VRF_KEY_2 = "AAdjb1iPY8CiDmq9H34tKTBF8a3oDQ=="
+
+        private const val VRF_TABLE_3 =
+            "NQHlu1/wVO5EmkwQymF810qqY2xG1k2obcas4Z9mCsPEIFl9pRIjFxbJ7ybMHbBckT5Ton85E0FOeHezbh/mjlEYpmpnlXOS8dgrqeq2KfxImTh1YK9y0PeMNhzA1OQzSY9brYOJq/l2QnE/hwOeZIhPixVSKIUlDb5vLcH6RWKxkIEMuP0bDwIqQ71AJJaEaMJL7A6YtyIwoRT+L5v4aZzodN/0+3nOGsfblFjgxSfPzVDjNFeNl5P26+kEC/8AHgdrpAbt3hHz3HrRN1Y6e+JHgF7ncFWnoF0y3THL1S71WgWGCa6KtSzTCCG58n68nTyj2T3Sshk7utqCtMi/ZQ=="
+        private const val VRF_KEY_3 = "DELOJgPsVaCcblDtTGMdHzM="
+
+        val GENRE_MAP = mapOf(
+            "Action" to "1",
+            "Adult" to "268929",
+            "Adventure" to "78",
+            "Avant Garde" to "3",
+            "Boys Love" to "4",
+            "Comedy" to "5",
+            "Crime" to "268921",
+            "Demons" to "77",
+            "Drama" to "6",
+            "Ecchi" to "7",
+            "Fantasy" to "79",
+            "Girls Love" to "9",
+            "Gourmet" to "10",
+            "Harem" to "11",
+            "Hentai" to "268930",
+            "Historical" to "268922",
+            "Horror" to "530",
+            "Isekai" to "13",
+            "Iyashikei" to "531",
+            "Josei" to "15",
+            "Kids" to "532",
+            "Magic" to "539",
+            "Magical Girls" to "268923",
+            "Mahou Shoujo" to "533",
+            "Martial Arts" to "534",
+            "Mature" to "268931",
+            "Mecha" to "19",
+            "Medical" to "268924",
+            "Military" to "535",
+            "Music" to "21",
+            "Mystery" to "22",
+            "Parody" to "23",
+            "Philosophical" to "268925",
+            "Psychological" to "536",
+            "Reverse Harem" to "25",
+            "Romance" to "26",
+            "School" to "73",
+            "Sci-Fi" to "28",
+            "Seinen" to "537",
+            "Shoujo" to "30",
+            "Shounen" to "31",
+            "Slice of Life" to "538",
+            "Smut" to "268932",
+            "Space" to "33",
+            "Sports" to "34",
+            "Super Power" to "75",
+            "Superhero" to "268926",
+            "Supernatural" to "76",
+            "Suspense" to "37",
+            "Thriller" to "38",
+            "Tragedy" to "268927",
+            "Vampire" to "39",
+            "Wuxia" to "268928"
+        )
+    }
+
+    private val tags by lazy {
+        GENRE_MAP.entries.map { (title, id) ->
+            MangaTag(title, id, source)
+        }.toSet()
+    }
+
+    override suspend fun getFilterOptions() = MangaListFilterOptions(
+        availableTags = tags,
+        availableStates = EnumSet.of(
+            MangaState.ONGOING, MangaState.FINISHED,
+            MangaState.ABANDONED, MangaState.PAUSED, MangaState.UPCOMING,
+        ),
+        availableContentTypes = EnumSet.of(
+            ContentType.MANGA, ContentType.MANHWA, ContentType.MANHUA, ContentType.OTHER,
+        ),
+        availableDemographics = EnumSet.of(Demographic.SHOUNEN, Demographic.SHOUJO, Demographic.SEINEN, Demographic.JOSEI),
+    )
+
+    override suspend fun getListPage(
+        page: Int,
+        order: SortOrder,
+        filter: MangaListFilter,
+    ): List<Manga> {
+        val urlBuilder = okhttp3.HttpUrl.Builder()
+            .scheme("https")
+            .host(domain)
+            .addPathSegments("api/titles")
+            .addQueryParameter("page", page.toString())
+            .addQueryParameter("limit", "50")
+            // Without this every language variant browses the whole catalogue,
+            // most of which has no chapters in that language at all.
+            .addQueryParameter("languages[]", siteLang)
+
+        if (!filter.query.isNullOrBlank()) {
+            urlBuilder.addQueryParameter("keyword", filter.query)
+        }
+
+        if (filter.yearFrom > 0) {
+            urlBuilder.addQueryParameter("year_from", filter.yearFrom.toString())
+        }
+        if (filter.yearTo > 0) {
+            urlBuilder.addQueryParameter("year_to", filter.yearTo.toString())
+        }
+
+        filter.types.forEach { type ->
+            val value = when (type) {
+                ContentType.MANGA -> "manga"
+                ContentType.MANHWA -> "manhwa"
+                ContentType.MANHUA -> "manhua"
+                ContentType.OTHER -> "other"
+                else -> null
+            }
+            value?.let { urlBuilder.addQueryParameter("types[]", it) }
+        }
+
+        filter.demographics.forEach { demo ->
+            val id = when (demo) {
+                Demographic.JOSEI -> "268919"
+                Demographic.SEINEN -> "268920"
+                Demographic.SHOUJO -> "268917"
+                Demographic.SHOUNEN -> "268918"
+                else -> null
+            }
+            id?.let { urlBuilder.addQueryParameter("demographics[]", it) }
+        }
+
+        filter.tags.forEach { urlBuilder.addQueryParameter("genres_in[]", it.key) }
+        filter.tagsExclude.forEach { urlBuilder.addQueryParameter("genres_ex[]", it.key) }
+
+        filter.states.forEach { state ->
+            val apiState = when (state) {
+                MangaState.ONGOING -> "releasing"
+                MangaState.FINISHED -> "finished"
+                MangaState.ABANDONED -> "discontinued"
+                MangaState.PAUSED -> "on_hiatus"
+                MangaState.UPCOMING -> "not_yet_released"
+                else -> null
+            }
+            apiState?.let { urlBuilder.addQueryParameter("statuses[]", it) }
+        }
+
+        val sortParam = when (order) {
+            SortOrder.UPDATED -> "chapter_updated_at" to "desc"
+            SortOrder.POPULARITY -> "views_total" to "desc"
+            SortOrder.RATING -> "score" to "desc"
+            SortOrder.NEWEST -> "created_at" to "desc"
+            SortOrder.ALPHABETICAL -> "title" to "asc"
+            SortOrder.RELEVANCE -> "relevance" to "desc"
+            SortOrder.POPULARITY_WEEK -> "views_7d" to "desc"
+            SortOrder.POPULARITY_MONTH -> "views_30d" to "desc"
+            else -> null
+        }
+
+        sortParam?.let { (field, dir) ->
+            urlBuilder.addQueryParameter("order[$field]", dir)
+        }
+
+        val url = urlBuilder.build().toString()
+
+        val response = apiClient.httpGet(url).parseJson()
+        val items = response.getJSONArray("items")
+        val mangas = mutableListOf<Manga>()
+        for (i in 0 until items.length()) {
+            val obj = items.getJSONObject(i)
+            val hid = obj.getString("hid")
+            val slug = obj.optString("slug", null)
+            val title = obj.getString("title")
+            val poster = obj.optJSONObject("poster")
+            // optString returns "" (not null) for a missing key, so the elvis
+            // chain needs the emptiness check to actually fall through.
+            val cover = poster?.optString("large")?.takeIf { it.isNotEmpty() }
+                ?: poster?.optString("medium")?.takeIf { it.isNotEmpty() }
+                ?: poster?.optString("small")?.takeIf { it.isNotEmpty() }
+                ?: ""
+            val urlPath = "/title/$hid${slug?.let { "-$it" } ?: ""}"
+            mangas.add(
+                Manga(
+                    id = generateUid(urlPath),
+                    url = urlPath,
+                    publicUrl = "https://$domain$urlPath",
+                    title = title,
+                    coverUrl = cover,
+                    source = source,
+                    altTitles = emptySet(),
+                    largeCoverUrl = null,
+                    authors = emptySet(),
+                    contentRating = null,
+                    rating = RATING_UNKNOWN,
+                    state = null,
+                    tags = emptySet(),
+                )
             )
         }
+        return mangas
     }
 
-	private val dateFormat = SimpleDateFormat("MMM dd, yyyy", Locale.ENGLISH)
-	private val volumeNumRegex = Regex("""vol(ume)?\s*(\d+)""", RegexOption.IGNORE_CASE)
+    override suspend fun getDetails(manga: Manga): Manga {
+        detailsCache[manga.url]?.let { return it }
 
-	override suspend fun getRelatedManga(seed: Manga): List<Manga> = coroutineScope {
-		val document = client.httpGet(seed.url.toAbsoluteUrl(domain)).parseHtml()
-		val total = document.select(
-			"section.m-related a[href*=/manga/], .side-manga:not(:has(.head:contains(trending))) .unit",
-		).size
-		val mangas = ArrayList<Manga>(total)
+        val result = coroutineScope {
+            val hid = extractHid(manga.url)
 
-		// "Related Manga"
-		document.select("section.m-related a[href*=/manga/]").map {
-			async {
-				val url = it.attrAsRelativeUrl("href")
+            val detailsJson = apiClient.httpGet("https://$domain/api/titles/$hid").parseJson()
+            val data = detailsJson.getJSONObject("data")
 
-				val mangaDocument = client
-					.httpGet(url.toAbsoluteUrl(domain))
-					.parseHtml()
+            val hasVolumes = data.optBoolean("hasVolumes", false)
 
-				val chaptersInManga = mangaDocument.select(".m-list div.tab-content .list-menu .dropdown-item")
-					.map { i -> i.attr("data-code").lowercase() }
+            val chaptersDeferred = async { fetchChapters(hid, hasVolumes) }
 
+            val title = data.getString("title")
+            val poster = data.optJSONObject("poster")
+            val cover = poster?.optString("large")?.takeIf { it.isNotEmpty() }
+                ?: poster?.optString("medium")?.takeIf { it.isNotEmpty() }
+                ?: poster?.optString("small")?.takeIf { it.isNotEmpty() }
+            val synopsisHtml = data.optString("synopsisHtml", null)
+            val status = data.optString("status", null)
+            val type = data.optString("type", null)
+            val authorsList = data.optJSONArray("authors")?.let { arr ->
+                (0 until arr.length()).map { arr.getJSONObject(it).getString("title") }
+            }.orEmpty()
+            val artistsList = data.optJSONArray("artists")?.let { arr ->
+                (0 until arr.length()).map { arr.getJSONObject(it).getString("title") }
+            }.orEmpty()
+            val genres = data.optJSONArray("genres")?.let { arr ->
+                (0 until arr.length()).map { arr.getJSONObject(it).getString("title") }
+            }
+            val themes = data.optJSONArray("themes")?.let { arr ->
+                (0 until arr.length()).map { arr.getJSONObject(it).getString("title") }
+            }
+            val altTitlesArray = data.optJSONArray("altTitles")?.let { arr ->
+                (0 until arr.length()).map { arr.getString(it) }
+            } ?: emptyList()
 
-				if (!chaptersInManga.contains(siteLang)) {
-					return@async null
-				}
+            val rawRating = data.optDouble("rating", -1.0)
+            val rating = if (rawRating >= 0.0) (rawRating / 10.0).toFloat() else RATING_UNKNOWN
 
-				Manga(
-					id = generateUid(url),
-					url = url,
-					publicUrl = url.toAbsoluteUrl(domain),
-					title = it.ownText(),
-					coverUrl = mangaDocument.selectFirstOrThrow("div.manga-detail div.poster img")
-						.attrAsAbsoluteUrl("src"),
-					source = source,
-					altTitles = emptySet(),
-					largeCoverUrl = null,
-					authors = emptySet(),
-					contentRating = null,
-					rating = RATING_UNKNOWN,
-					state = null,
-					tags = emptySet(),
-				)
-			}
-		}.awaitAll()
-			.filterNotNullTo(mangas)
+            val synopsisText = synopsisHtml?.let { Jsoup.parseBodyFragment(it).text() } ?: ""
 
-		// "You may also like"
-		document.select(".side-manga:not(:has(.head:contains(trending))) .unit").forEach {
-			val url = it.attrAsRelativeUrl("href")
-			mangas.add(
-				Manga(
-					id = generateUid(url),
-					url = url,
-					publicUrl = url.toAbsoluteUrl(domain),
-					title = it.selectFirstOrThrow(".info h6").ownText(),
-					coverUrl = it.selectFirstOrThrow(".poster img").attrAsAbsoluteUrl("src"),
-					source = source,
-					altTitles = emptySet(),
-					largeCoverUrl = null,
-					authors = emptySet(),
-					contentRating = null,
-					rating = RATING_UNKNOWN,
-					state = null,
-					tags = emptySet(),
-				),
-			)
-		}
+            val genreList = buildList {
+                type?.let { add(it.replaceFirstChar { c -> c.uppercase() }) }
+                genres?.let { addAll(it) }
+                themes?.let { addAll(it) }
+            }
+            val genreTags = genreList.mapNotNull { name ->
+                tags.find { it.title == name }
+            }.toSet()
 
-		mangas.ifEmpty {
-			// fallback: author's other works
-			document.select("div.meta a[href*=/author/]").map {
-				async {
-					val url = it.attrAsAbsoluteUrl("href").toHttpUrl()
-						.newBuilder()
-						.addQueryParameter("language[]", siteLang)
-						.build()
+            val chapters = chaptersDeferred.await()
 
-					client.httpGet(url)
-						.parseHtml().parseMangaList()
-				}
-			}.awaitAll().flatten()
-		}
-	}
+            manga.copy(
+                title = title,
+                coverUrl = cover ?: manga.coverUrl,
+                authors = (authorsList + artistsList).toSet(),
+                description = synopsisText.trim(),
+                rating = rating,
+                state = when (status?.lowercase()) {
+                    "releasing" -> MangaState.ONGOING
+                    "finished" -> MangaState.FINISHED
+                    "discontinued" -> MangaState.ABANDONED
+                    "on_hiatus" -> MangaState.PAUSED
+                    "not_yet_released" -> MangaState.UPCOMING
+                    else -> null
+                },
+                tags = genreTags,
+                altTitles = altTitlesArray.toSet(),
+                chapters = chapters,
+            )
+        }
+
+        detailsCache.put(manga.url, result)
+        return result
+    }
+
+    @get:Synchronized
+    private val detailsCache = object : LinkedHashMap<String, Manga>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Manga>?): Boolean {
+            return size > 20
+        }
+    }
+
+    private suspend fun fetchChapters(hid: String, hasVolumes: Boolean): List<MangaChapter> {
+        val chapters = mutableListOf<MangaChapter>()
+        val base = "https://$domain/api/titles/$hid"
+
+        var page = 1
+        var lastPage: Int
+        do {
+            val json = apiClient.httpGet(
+                "$base/chapters?language=$siteLang&sort=number&order=desc&page=$page&limit=200"
+            ).parseJson()
+            val items = json.getJSONArray("items")
+            val meta = json.optJSONObject("meta")
+            lastPage = meta?.optInt("lastPage", 1) ?: 1
+
+            for (i in 0 until items.length()) {
+                val ch = items.getJSONObject(i)
+                if (ch.getString("language") != siteLang) continue
+
+                val id = ch.getInt("id")
+                val number = ch.getDouble("number").toFloat()
+                val name = ch.optString("name", null)
+                val createdAt = ch.optLong("createdAt", 0L) * 1000L
+                val type = ch.getString("type")
+                val chapterUrl = "/title/$hid/$id"
+                val displayName = buildString {
+                    append("Ch. ")
+                    append(number.toString().removeSuffix(".0"))
+                    if (!name.isNullOrBlank()) append(" - $name")
+                }
+                chapters.add(
+                    MangaChapter(
+                        id = generateUid(chapterUrl),
+                        title = displayName,
+                        number = number,
+                        volume = 0,
+                        url = chapterUrl,
+                        scanlator = null,
+                        uploadDate = createdAt,
+                        branch = type,
+                        source = source,
+                    )
+                )
+            }
+            page++
+        } while (page <= lastPage)
+
+        if (hasVolumes) {
+            try {
+                val volJson = apiClient.httpGet("$base/volumes?language=$siteLang").parseJson()
+                val volItems = volJson.getJSONArray("items")
+                for (i in 0 until volItems.length()) {
+                    val vol = volItems.getJSONObject(i)
+                    if (vol.getString("language") != siteLang) continue
+
+                    val volId = vol.getInt("id")
+                    val volNumber = vol.getDouble("number").toFloat()
+                    val volName = vol.optString("name", "").takeIf { it.isNotBlank() }
+                    val chapterCount = vol.optInt("chapterCount", 0)
+
+                    val title = buildString {
+                        append("Vol. ")
+                        append(volNumber.toString().removeSuffix(".0"))
+                        if (volName != null) append(" - $volName")
+                    }
+                    val name = if (chapterCount > 0) "$chapterCount chapters" else ""
+
+                    chapters.add(
+                        MangaChapter(
+                            id = generateUid("/title/$hid/vol/$volId"),
+                            title = title,
+                            number = volNumber,
+                            volume = 0,
+                            url = "/title/$hid/vol/$volId",
+                            scanlator = name,
+                            uploadDate = 0L,
+                            branch = "Volume",
+                            source = source,
+                        )
+                    )
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        val distinctBranches = chapters.map { it.branch }.distinct()
+        val useGroups = distinctBranches.size > 1
+
+        return chapters
+            .map { chapter ->
+                chapter.copy(
+                    branch = if (useGroups) (chapter.branch ?: "").replaceFirstChar { it.uppercase() } else null
+                )
+            }
+            .sortedBy { it.number }
+    }
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-        val chapterId = chapter.url.substringAfterLast('/')
-        val vrf = VrfGenerator.generate("chapter@$chapterId")
+        val chapterId = chapter.url.substringAfterLast("/") // numeric ID
+        val isVolume = chapter.url.contains("/vol/")
+        val endpoint = if (isVolume) "volumes" else "chapters"
 
-        val images = client
-            .httpGet("https://$domain/ajax/read/chapter/$chapterId?vrf=$vrf")
-            .parseJson()
-            .getJSONObject("result")
-            .getJSONArray("images")
-
-		val pages = ArrayList<MangaPage>(images.length())
-
-		for (i in 0 until images.length()) {
-			val img = images.getJSONArray(i)
-
-			val url = img.getString(0)
-			val offset = img.getInt(2)
-
-			pages.add(
-				MangaPage(
-					id = generateUid(url),
-					url = if (offset < 1) {
-						url
-					} else {
-						"$url#scrambled_$offset"
-					},
-					preview = null,
-					source = source,
-				),
-			)
-		}
-
-		return pages
-	}
-
-	private fun Int.ceilDiv(other: Int) = (this + (other - 1)) / other
-
-	@MangaSourceParser("MANGAFIRE_EN", "MangaFire English", "en")
-	class English(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_EN, "en")
-
-	@MangaSourceParser("MANGAFIRE_ES", "MangaFire Spanish", "es")
-	class Spanish(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_ES, "es")
-
-	@MangaSourceParser("MANGAFIRE_ESLA", "MangaFire Spanish (Latim)", "es")
-	class SpanishLatim(context: MangaLoaderContext) :
-		MangaFireParser(context, MangaParserSource.MANGAFIRE_ESLA, "es-la")
-
-	@MangaSourceParser("MANGAFIRE_FR", "MangaFire French", "fr")
-	class French(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_FR, "fr")
-
-	@MangaSourceParser("MANGAFIRE_JA", "MangaFire Japanese", "ja")
-	class Japanese(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_JA, "ja")
-
-	@MangaSourceParser("MANGAFIRE_PT", "MangaFire Portuguese", "pt")
-	class Portuguese(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_PT, "pt")
-
-	@MangaSourceParser("MANGAFIRE_PTBR", "MangaFire Portuguese (Brazil)", "pt")
-	class PortugueseBR(context: MangaLoaderContext) :
-		MangaFireParser(context, MangaParserSource.MANGAFIRE_PTBR, "pt-br")
-}
-
-private object VrfGenerator {
-    private fun atob(data: String): ByteArray = Base64.getDecoder().decode(data)
-
-    private fun btoa(data: ByteArray): String = Base64.getEncoder().encodeToString(data)
-
-    private fun rc4(key: ByteArray, input: ByteArray): ByteArray {
-        val s = IntArray(256) { it }
-        var j = 0
-
-        // KSA
-        for (i in 0..255) {
-            j = (j + s[i] + key[i % key.size].toInt().and(0xFF)) and 0xFF
-            val temp = s[i]
-            s[i] = s[j]
-            s[j] = temp
+        val response = apiClient.httpGet("https://$domain/api/$endpoint/$chapterId").parseJson()
+        val pagesArray = response.getJSONObject("data").getJSONArray("pages")
+        val pages = ArrayList<MangaPage>(pagesArray.length())
+        for (i in 0 until pagesArray.length()) {
+            val pageObj = pagesArray.getJSONObject(i)
+            val url = pageObj.getString("url")
+            pages.add(
+                MangaPage(
+                    id = generateUid(url),
+                    url = url,
+                    preview = null,
+                    source = source,
+                )
+            )
         }
-
-        // PRGA
-        val output = ByteArray(input.size)
-        var i = 0
-        j = 0
-        for (y in input.indices) {
-            i = (i + 1) and 0xFF
-            j = (j + s[i]) and 0xFF
-            val temp = s[i]
-            s[i] = s[j]
-            s[j] = temp
-            val k = s[(s[i] + s[j]) and 0xFF]
-            output[y] = (input[y].toInt() xor k).toByte()
-        }
-        return output
+        return pages
     }
 
-    private fun transform(
-        input: ByteArray,
-        initSeedBytes: ByteArray,
-        prefixKeyBytes: ByteArray,
-        prefixLen: Int,
-        schedule: List<(Int) -> Int>,
-    ): ByteArray {
-        val out = mutableListOf<Byte>()
-        for (i in input.indices) {
-            if (i < prefixLen) {
-                out.add(prefixKeyBytes[i])
-            }
-            val transformed = schedule[i % 10](
-                (input[i].toInt() xor initSeedBytes[i % 32].toInt()) and 0xFF,
-            ) and 0xFF
-            out.add(transformed.toByte())
+    override suspend fun getRelatedManga(seed: Manga): List<Manga> = emptyList()
+
+    override val authUrl: String get() = "https://$domain"
+    override suspend fun isAuthorized(): Boolean = true
+    override suspend fun getUsername(): String = ""
+
+
+    private fun extractHid(url: String): String {
+        val lastPart = url.removeSuffix("/").substringAfterLast("/")
+        return when {
+            lastPart.contains(".") -> lastPart.substringAfterLast(".")
+            lastPart.contains("-") -> lastPart.substringBefore("-")
+            else -> lastPart
         }
-        return out.toByteArray()
     }
 
-    private val scheduleC = listOf<(Int) -> Int>(
-        { c -> (c - 48 + 256) and 0xFF },
-        { c -> (c - 19 + 256) and 0xFF },
-        { c -> (c xor 241) and 0xFF },
-        { c -> (c - 19 + 256) and 0xFF },
-        { c -> (c + 223) and 0xFF },
-        { c -> (c - 19 + 256) and 0xFF },
-        { c -> (c - 170 + 256) and 0xFF },
-        { c -> (c - 19 + 256) and 0xFF },
-        { c -> (c - 48 + 256) and 0xFF },
-        { c -> (c xor 8) and 0xFF },
-    )
+    @MangaSourceParser("MANGAFIRE_EN", "MangaFire (English)", "en")
+    class English(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_EN, "en")
 
-    private val scheduleY = listOf<(Int) -> Int>(
-        { c -> ((c shl 4) or (c ushr 4)) and 0xFF },
-        { c -> (c + 223) and 0xFF },
-        { c -> ((c shl 4) or (c ushr 4)) and 0xFF },
-        { c -> (c xor 163) and 0xFF },
-        { c -> (c - 48 + 256) and 0xFF },
-        { c -> (c + 82) and 0xFF },
-        { c -> (c + 223) and 0xFF },
-        { c -> (c - 48 + 256) and 0xFF },
-        { c -> (c xor 83) and 0xFF },
-        { c -> ((c shl 4) or (c ushr 4)) and 0xFF },
-    )
+    @MangaSourceParser("MANGAFIRE_ES", "MangaFire (Spanish)", "es")
+    class Spanish(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_ES, "es")
 
-    private val scheduleB = listOf<(Int) -> Int>(
-        { c -> (c - 19 + 256) and 0xFF },
-        { c -> (c + 82) and 0xFF },
-        { c -> (c - 48 + 256) and 0xFF },
-        { c -> (c - 170 + 256) and 0xFF },
-        { c -> ((c shl 4) or (c ushr 4)) and 0xFF },
-        { c -> (c - 48 + 256) and 0xFF },
-        { c -> (c - 170 + 256) and 0xFF },
-        { c -> (c xor 8) and 0xFF },
-        { c -> (c + 82) and 0xFF },
-        { c -> (c xor 163) and 0xFF },
-    )
+    @MangaSourceParser("MANGAFIRE_ESLA", "MangaFire Spanish (Latin)", "es")
+    class SpanishLatim(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_ESLA, "es-la")
 
-    private val scheduleJ = listOf<(Int) -> Int>(
-        { c -> (c + 223) and 0xFF },
-        { c -> ((c shl 4) or (c ushr 4)) and 0xFF },
-        { c -> (c + 223) and 0xFF },
-        { c -> (c xor 83) and 0xFF },
-        { c -> (c - 19 + 256) and 0xFF },
-        { c -> (c + 223) and 0xFF },
-        { c -> (c - 170 + 256) and 0xFF },
-        { c -> (c + 223) and 0xFF },
-        { c -> (c - 170 + 256) and 0xFF },
-        { c -> (c xor 83) and 0xFF },
-    )
+    @MangaSourceParser("MANGAFIRE_FR", "MangaFire (French)", "fr")
+    class French(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_FR, "fr")
 
-    private val scheduleE = listOf<(Int) -> Int>(
-        { c -> (c + 82) and 0xFF },
-        { c -> (c xor 83) and 0xFF },
-        { c -> (c xor 163) and 0xFF },
-        { c -> (c + 82) and 0xFF },
-        { c -> (c - 170 + 256) and 0xFF },
-        { c -> (c xor 8) and 0xFF },
-        { c -> (c xor 241) and 0xFF },
-        { c -> (c + 82) and 0xFF },
-        { c -> (c + 176) and 0xFF },
-        { c -> ((c shl 4) or (c ushr 4)) and 0xFF },
-    )
+    @MangaSourceParser("MANGAFIRE_JA", "MangaFire (Japanese)", "ja")
+    class Japanese(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_JA, "ja")
 
-    private val rc4Keys = mapOf(
-        "l" to "u8cBwTi1CM4XE3BkwG5Ble3AxWgnhKiXD9Cr279yNW0=",
-        "g" to "t00NOJ/Fl3wZtez1xU6/YvcWDoXzjrDHJLL2r/IWgcY=",
-        "B" to "S7I+968ZY4Fo3sLVNH/ExCNq7gjuOHjSRgSqh6SsPJc=",
-        "m" to "7D4Q8i8dApRj6UWxXbIBEa1UqvjI+8W0UvPH9talJK8=",
-        "F" to "0JsmfWZA1kwZeWLk5gfV5g41lwLL72wHbam5ZPfnOVE=",
-    )
+    @MangaSourceParser("MANGAFIRE_PT", "MangaFire (Portuguese)", "pt")
+    class Portuguese(context: MangaLoaderContext) : MangaFireParser(context, MangaParserSource.MANGAFIRE_PT, "pt")
 
-    private val seeds32 = mapOf(
-        "A" to "pGjzSCtS4izckNAOhrY5unJnO2E1VbrU+tXRYG24vTo=",
-        "V" to "dFcKX9Qpu7mt/AD6mb1QF4w+KqHTKmdiqp7penubAKI=",
-        "N" to "owp1QIY/kBiRWrRn9TLN2CdZsLeejzHhfJwdiQMjg3w=",
-        "P" to "H1XbRvXOvZAhyyPaO68vgIUgdAHn68Y6mrwkpIpEue8=",
-        "k" to "2Nmobf/mpQ7+Dxq1/olPSDj3xV8PZkPbKaucJvVckL0=",
-    )
-
-    private val prefixKeys = mapOf(
-        "O" to "Rowe+rg/0g==",
-        "v" to "8cULcnOMJVY8AA==",
-        "L" to "n2+Og2Gth8Hh",
-        "p" to "aRpvzH+yoA==",
-        "W" to "ZB4oBi0=",
-    )
-
-    fun generate(input: String): String {
-        var bytes = input.toByteArray()
-        // RC4 1
-        bytes = rc4(atob(rc4Keys["l"]!!), bytes)
-
-        // Step C1
-        bytes = transform(bytes, atob(seeds32["A"]!!), atob(prefixKeys["O"]!!), 7, scheduleC)
-
-        // RC4 2
-        bytes = rc4(atob(rc4Keys["g"]!!), bytes)
-
-        // Step Y
-        bytes = transform(bytes, atob(seeds32["V"]!!), atob(prefixKeys["v"]!!), 10, scheduleY)
-
-        // RC4 3
-        bytes = rc4(atob(rc4Keys["B"]!!), bytes)
-
-        // Step B
-        bytes = transform(bytes, atob(seeds32["N"]!!), atob(prefixKeys["L"]!!), 9, scheduleB)
-
-        // RC4 4
-        bytes = rc4(atob(rc4Keys["m"]!!), bytes)
-
-        // Step J
-        bytes = transform(bytes, atob(seeds32["P"]!!), atob(prefixKeys["p"]!!), 7, scheduleJ)
-
-        // RC4 5
-        bytes = rc4(atob(rc4Keys["F"]!!), bytes)
-
-        // Step E
-        bytes = transform(bytes, atob(seeds32["k"]!!), atob(prefixKeys["W"]!!), 5, scheduleE)
-
-        // Base64URL encode
-        return btoa(bytes)
-            .replace("+", "-")
-            .replace("/", "_")
-            .replace("=", "")
-    }
-}
-
-public object SSLUtils {
-    public val trustAllCerts: Array<TrustManager> = arrayOf(@Suppress("CustomX509TrustManager")
-    object : X509TrustManager {
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-        override fun checkClientTrusted(certs: Array<X509Certificate>, authType: String) = Unit
-        override fun checkServerTrusted(certs: Array<X509Certificate>, authType: String) = Unit
-    })
-
-    public val sslSocketFactory: SSLSocketFactory? = SSLContext.getInstance("SSL").apply {
-        init(null, trustAllCerts, SecureRandom())
-    }.socketFactory
-
-    public val trustManager: X509TrustManager = trustAllCerts[0] as X509TrustManager
+    @MangaSourceParser("MANGAFIRE_PTBR", "MangaFire Portuguese (Brazil)", "pt")
+    class PortugueseBR(context: MangaLoaderContext) :
+        MangaFireParser(context, MangaParserSource.MANGAFIRE_PTBR, "pt-br")
 }

@@ -1,5 +1,6 @@
 package hanten.wre.app.parsers.site.zeistmanga.id
 
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.model.ContentType
@@ -10,6 +11,7 @@ import hanten.wre.app.parsers.util.mapToSet
 import hanten.wre.app.parsers.util.parseHtml
 import hanten.wre.app.parsers.util.requireElementById
 
+@Broken
 @MangaSourceParser("KLMANHUA", "KlManhua", "id", ContentType.HENTAI)
 internal class KlManhua(context: MangaLoaderContext) :
 	ZeistMangaParser(context, MangaParserSource.KLMANHUA, "klmanhua.blogspot.com") {
