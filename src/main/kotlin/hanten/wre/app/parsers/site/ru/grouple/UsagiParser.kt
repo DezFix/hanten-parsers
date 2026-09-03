@@ -30,6 +30,12 @@ internal class UsagiParser(
 
 	override fun getRequestHeaders() = super.getRequestHeaders().newBuilder()
 		.add("referer", "https://$domain/")
+		.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+		.add("Upgrade-Insecure-Requests", "1")
+		.add("Sec-Fetch-Dest", "document")
+		.add("Sec-Fetch-Mode", "navigate")
+		.add("Sec-Fetch-Site", "none")
+		.add("Sec-Fetch-User", "?1")
 		.build()
 
 	// Anti-bot stubs are often transient: retry document requests with backoff.
