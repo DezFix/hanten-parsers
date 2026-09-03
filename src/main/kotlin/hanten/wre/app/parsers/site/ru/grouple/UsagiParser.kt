@@ -13,6 +13,7 @@ import hanten.wre.app.parsers.model.MangaParserSource
 import hanten.wre.app.parsers.model.SortOrder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import org.jsoup.HttpStatusException
 
 @MangaSourceParser("USAGI", "Usagi", "ru")
 internal class UsagiParser(
@@ -54,7 +55,13 @@ internal class UsagiParser(
 				throw e
 			} catch (e: CancellationException) {
 				throw e
-			} catch (e: Throwable) {
+			} catch (e: HttpStatusException) {
+				// Retry only transient anti-bot failures (500 smiley page, rate limits).
+				// Deterministic answers (404 stubs and everything else) fail fast
+				// to avoid hammering and IP flagging.
+				if (e.statusCode !in TRANSIENT_CODES || attempt == MAX_RETRIES - 1) {
+					throw e
+				}
 				lastError = e
 				delay(RETRY_DELAY_MS * (attempt + 1))
 			}
@@ -68,6 +75,7 @@ internal class UsagiParser(
 
 		private const val MAX_RETRIES = 3
 		private const val RETRY_DELAY_MS = 2000L
+		private val TRANSIENT_CODES = intArrayOf(429, 500, 502, 503)
 		private const val CHROME_UA =
 			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 	}
