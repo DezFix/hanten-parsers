@@ -1,4 +1,4 @@
-package hanten.wre.app.core.parser
+package hanten.wre.app.parsers.util
 
 import org.jsoup.nodes.Element
 import hanten.wre.app.parsers.util.attrOrNull

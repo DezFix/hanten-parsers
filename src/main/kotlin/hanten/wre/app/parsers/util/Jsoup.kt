@@ -7,7 +7,6 @@ import org.jsoup.nodes.Element
 import org.jsoup.select.Elements
 import org.jsoup.select.QueryParser
 import org.jsoup.select.Selector
-import hanten.wre.app.core.parser.CSSBackground
 import hanten.wre.app.parsers.InternalParsersApi
 import hanten.wre.app.parsers.exception.ParseException
 import kotlin.contracts.contract
