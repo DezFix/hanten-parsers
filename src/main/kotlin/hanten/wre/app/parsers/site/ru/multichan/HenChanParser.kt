@@ -12,15 +12,12 @@ import java.util.*
 internal class HenChanParser(context: MangaLoaderContext) : ChanParser(context, MangaParserSource.HENCHAN) {
 
 	override val configKeyDomain = ConfigKey.Domain(
+		"hentaichan.live",
 		"x12.h-chan.me",
-        "x5.h-chan.me",
-		"xxxx.henchan.pro",
+		"x5.h-chan.me",
 		"xxl.hentaichan.live",
-		"xxx.henchan.pro",
 		"y.hentaichan.live",
 		"xx.hentaichan.live",
-		"x.henchan.pro",
-		"hentaichan.live",
 	)
 
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
