@@ -83,26 +83,43 @@ internal abstract class ChanParser(
 
 	override suspend fun getDetails(manga: Manga): Manga {
 		val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
-		val root = doc.body().requireElementById("dle-content")
+		// Fall back to the whole body: challenge/redirect shells have no dle-content,
+		// crashing on them hides the real problem and breaks the CF retry flow.
+		val root = doc.body().getElementById("dle-content") ?: doc.body()
 		val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.US)
 		return manga.copy(
 			description = root.getElementById("description")?.html()?.substringBeforeLast("<div"),
 			largeCoverUrl = root.getElementById("cover")?.absUrl("src"),
-			chapters = root.select("table.table_cha tr:gt(1)").mapChapters(reversed = true) { i, tr ->
-				val a = tr.selectFirst("a")
-				val href = a?.attrAsRelativeUrlOrNull("href") ?: return@mapChapters null
-				MangaChapter(
-					id = generateUid(a.attrAsRelativeUrlAnyHost("href")),
-					title = tr.selectFirst("a")?.textOrNull(),
-					number = i + 1f,
-					volume = 0,
-					url = href,
-					scanlator = null,
-					branch = null,
-					uploadDate = dateFormat.parseSafe(tr.selectFirst("div.date")?.text()),
-					source = source,
-				)
+			chapters = findChapterRows(root).mapChapters(reversed = true) { i, row ->
+				parseChapterRow(row, i, dateFormat)
 			},
+		)
+	}
+
+	private fun findChapterRows(root: Element): List<Element> {
+		root.select("table.table_cha tr:gt(1)").takeIf { it.isNotEmpty() }?.let { return it }
+		// New im.manga-chan.me markup: tr.no_zaliv / tr.zaliv with div.manga2 links
+		root.select("tr.no_zaliv, tr.zaliv").takeIf { it.isNotEmpty() }?.let { return it }
+		return emptyList()
+	}
+
+	private fun parseChapterRow(row: Element, index: Int, dateFormat: SimpleDateFormat): MangaChapter? {
+		val tr = row.selectFirstParent("tr") ?: row.takeIf { it.tagName() == "tr" } ?: return null
+		val a = tr.selectFirst("div.manga2 a") ?: tr.selectFirst("a") ?: return null
+		val href = a.attrAsRelativeUrlOrNull("href") ?: return null
+		return MangaChapter(
+			id = generateUid(a.attrAsRelativeUrlAnyHost("href")),
+			title = a.textOrNull(),
+			number = HREF_V_CH_REGEX.find(href)?.groupValues?.getOrNull(2)?.toFloatOrNull()
+				?: (index + 1f),
+			volume = tr.attr("data-vol").toIntOrNull()
+				?: HREF_V_CH_REGEX.find(href)?.groupValues?.getOrNull(1)?.toIntOrNull()
+				?: 0,
+			url = href,
+			scanlator = null,
+			branch = null,
+			uploadDate = dateFormat.parseSafe(tr.selectFirst("td.date, div.date")?.text()),
+			source = source,
 		)
 	}
 
@@ -297,5 +314,9 @@ internal abstract class ChanParser(
 		}
 		val host = attr.toHttpUrl().host
 		return attr.substringAfter(host)
+	}
+
+	private companion object {
+		val HREF_V_CH_REGEX = Regex("""_v(\d+)_ch(\d+)""", RegexOption.IGNORE_CASE)
 	}
 }
