@@ -24,6 +24,7 @@ import java.util.*
 
 private const val PAGE_SIZE = 20
 private const val INFINITE = 999999
+private const val WEBVIEW_TIMEOUT_MS = 30000L
 private const val HEADER_ENCODING = "Content-Encoding"
 private const val IMAGE_BASEURL_FALLBACK = "https://hmvolumestorage.b-cdn.net/public-resources"
 
@@ -70,7 +71,7 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 		body.put("pageSize", INFINITE) // Hack lol (no)
 		body.put("page", 1)
 		body.put("sortOrder", "ASC")
-		val chapterRequest = webClient.httpPost(chapterApi, body).parseJson()
+		val chapterRequest = postApi(chapterApi, body)
 		return manga.copy(
 			chapters = chapterRequest.optJSONArray("data")?.mapJSONNotNull { jo ->
 				val chapterId = jo.getStringOrNull("id") ?: return@mapJSONNotNull null
@@ -114,7 +115,7 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 				tagFilter.put("filterValue", tag)
 				filters.put(tagFilter)
 				body.put("filters", filters)
-				webClient.httpPost(mangaApi, body).parseJson().getJSONArray("data")
+				postApi(mangaApi, body).getJSONArray("data")
 
 			}
 
@@ -136,7 +137,7 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 			else -> {
 				// Popular/Newest
 				body.put("filters", JSONArray())
-				webClient.httpPost(mangaApi, body).parseJson().getJSONArray("data")
+				postApi(mangaApi, body).getJSONArray("data")
 			}
 		}
 		return content.mapJSON { jo ->
@@ -226,6 +227,32 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 			tagsSet.add(MangaTag(title = item.toTitleCase(sourceLocale), key = item, source = source))
 		}
 		return tagsSet
+	}
+
+	private suspend fun postApi(url: String, body: JSONObject): JSONObject {
+		return try {
+			webClient.httpPost(url, body).parseJson()
+		} catch (e: kotlinx.coroutines.CancellationException) {
+			throw e
+		} catch (e: Exception) {
+			// data.api rejects non-browser TLS fingerprints with 400;
+			// retry the same call through the WebView engine (real browser stack)
+			webViewPost(url, body)
+		}
+	}
+
+	private suspend fun webViewPost(url: String, body: JSONObject): JSONObject {
+		val payload = body.toString()
+			.replace("\\", "\\\\")
+			.replace("'", "\\'")
+		val script = "fetch('$url',{" +
+			"method:'POST'," +
+			"headers:{'Content-Type':'application/json'}," +
+			"body:'$payload'" +
+			"}).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.text()})"
+		val text = context.evaluateJs("https://$domain", script, WEBVIEW_TIMEOUT_MS)
+			?: throw ParseException("Empty API response", url)
+		return JSONObject(text)
 	}
 
 	private suspend fun fetchCoversBaseUrl(): String {
