@@ -9,12 +9,14 @@ import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.core.PagedMangaParser
+import hanten.wre.app.parsers.exception.ParseException
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
 import hanten.wre.app.parsers.util.json.getFloatOrDefault
 import hanten.wre.app.parsers.util.json.getIntOrDefault
 import hanten.wre.app.parsers.util.json.getStringOrNull
 import hanten.wre.app.parsers.util.json.mapJSON
+import hanten.wre.app.parsers.util.json.mapJSONNotNull
 import hanten.wre.app.parsers.util.suspendlazy.getOrNull
 import hanten.wre.app.parsers.util.suspendlazy.suspendLazy
 import java.text.SimpleDateFormat
@@ -70,21 +72,22 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 		body.put("sortOrder", "ASC")
 		val chapterRequest = webClient.httpPost(chapterApi, body).parseJson()
 		return manga.copy(
-			chapters = chapterRequest.getJSONArray("data").mapJSON { jo ->
+			chapters = chapterRequest.optJSONArray("data")?.mapJSONNotNull { jo ->
+				val chapterId = jo.getStringOrNull("id") ?: return@mapJSONNotNull null
 				val number = jo.getFloatOrDefault("chapterNum", 0f)
 				val volume = jo.getIntOrDefault("volume", 0)
 				MangaChapter(
-					id = generateUid(jo.getString("id")),
+					id = generateUid(chapterId),
 					title = jo.getStringOrNull("title"),
 					number = number,
 					volume = volume,
-					url = jo.optString("chapterResourcesId"),
+					url = chapterId + "|" + manga.url,
 					scanlator = null,
-					uploadDate = dateFormat.parseSafe(jo.getString("lastUpdated")),
+					uploadDate = jo.getStringOrNull("lastUpdated")?.let { dateFormat.parseSafe(it) } ?: 0L,
 					branch = null,
 					source = source,
 				)
-			},
+			}.orEmpty(),
 		)
 	}
 
@@ -165,7 +168,11 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val content = webClient.httpGet("$framesApi/${chapter.url}").parseJson().getJSONObject("resourceIds")
+		val parts = chapter.url.split('|')
+		if (parts.size != 2) {
+			throw ParseException("Invalid chapter url", chapter.url)
+		}
+		val content = webClient.httpGet("$framesApi/${parts[0]}/${parts[1]}").parseJson().getJSONObject("resourceIds")
 		val baseUrl = imageStorageUrl.getOrNull() ?: IMAGE_BASEURL_FALLBACK
 		return List(content.length()) { i ->
 			val item = content.getString(i.toString())

@@ -109,6 +109,7 @@ internal abstract class ChanParser(
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
 		val fullUrl = chapter.url.toAbsoluteUrl(domain)
 		val doc = webClient.httpGet(fullUrl).parseHtml()
+		parsePagesFullimg(doc)?.let { return it }
 		val scripts = doc.select("script")
 		for (script in scripts) {
 			val data = script.html()
@@ -134,6 +135,33 @@ internal abstract class ChanParser(
 			}
 		}
 		doc.parseFailed("Pages list not found at ${chapter.url}")
+	}
+
+	private fun parsePagesFullimg(doc: org.jsoup.nodes.Document): List<MangaPage>? {
+		for (script in doc.select("script")) {
+			val data = script.html()
+			val pos = data.indexOf("\"fullimg\"")
+			if (pos == -1) {
+				continue
+			}
+			val arrayBody = data.substring(pos).substringAfter('[').substringBefore(']')
+			val urls = Regex("\"(https?://[^\"]+)\"").findAll(arrayBody)
+				.map { it.groupValues[1] }
+				.filter { it.isNotBlank() }
+				.toList()
+			if (urls.isEmpty()) {
+				continue
+			}
+			return urls.map { url ->
+				MangaPage(
+					id = generateUid(url),
+					url = url,
+					preview = null,
+					source = source,
+				)
+			}
+		}
+		return null
 	}
 
 	private suspend fun fetchAvailableTags(): Set<MangaTag> {
