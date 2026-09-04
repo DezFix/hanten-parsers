@@ -34,6 +34,7 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 	Interceptor {
 
 	private val urlApi get() = "https://data.api.$domain"
+	private val mangaObjectApi get() = "$urlApi/manga"
 	private val mangaApi get() = "$urlApi/v2/manga/cursor-list"
 	private val chapterApi get() = "$urlApi/v2/chapter/cursor-list"
 	private val genresListApi get() = "$urlApi/genres-tags/genres-list"
@@ -72,24 +73,43 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 		body.put("page", 1)
 		body.put("sortOrder", "ASC")
 		val chapterRequest = postApi(chapterApi, body)
-		return manga.copy(
-			chapters = chapterRequest.optJSONArray("data")?.mapJSONNotNull { jo ->
-				val chapterId = jo.getStringOrNull("id") ?: return@mapJSONNotNull null
-				val number = jo.getFloatOrDefault("chapterNum", 0f)
-				val volume = jo.getIntOrDefault("volume", 0)
-				MangaChapter(
-					id = generateUid(chapterId),
-					title = jo.getStringOrNull("title"),
-					number = number,
-					volume = volume,
-					url = chapterId + "|" + manga.url,
-					scanlator = null,
-					uploadDate = jo.getStringOrNull("lastUpdated")?.let { dateFormat.parseSafe(it) } ?: 0L,
-					branch = null,
-					source = source,
-				)
-			}.orEmpty(),
-		)
+		val chapters = chapterRequest.optJSONArray("data")?.mapJSONNotNull { jo ->
+			val chapterId = jo.getStringOrNull("id")
+				?: jo.getStringOrNull("chapterId")
+				?: jo.getStringOrNull("uuid")
+				?: return@mapJSONNotNull null
+			val number = jo.getFloatOrDefault("chapterNum", 0f)
+			val volume = jo.getIntOrDefault("volume", 0)
+			MangaChapter(
+				id = generateUid(chapterId),
+				title = jo.getStringOrNull("title"),
+				number = number,
+				volume = volume,
+				url = chapterId + "|" + manga.url,
+				scanlator = null,
+				uploadDate = jo.getStringOrNull("lastUpdated")?.let { dateFormat.parseSafe(it) } ?: 0L,
+				branch = null,
+				source = source,
+			)
+		}.orEmpty()
+		if (chapters.isEmpty()) {
+			checkEmptyChapters(manga.url, chapterRequest)
+		}
+		return manga.copy(chapters = chapters)
+	}
+
+	private suspend fun checkEmptyChapters(mangaId: String, response: JSONObject) {
+		val expected = runCatching {
+			webClient.httpGet("$mangaObjectApi/$mangaId").parseJson()
+				.getStringOrNull("chapters")?.toIntOrNull() ?: 0
+		}.getOrDefault(0)
+		if (expected > 0) {
+			val keys = response.keys().asSequence().toList()
+			throw ParseException(
+				"Empty chapters (site has ~$expected). Response keys: $keys",
+				"$chapterApi ($mangaId)",
+			)
+		}
 	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
