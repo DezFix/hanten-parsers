@@ -89,7 +89,9 @@ internal class UsagiParser(
 
 	companion object {
 
-		val domains = arrayOf("web.usagi.one")
+		// web.usagi.one filters aggressively (500 smiley / NOT FOUND stubs);
+		// a.zazaza.me serves the same catalog without the wall, so it is primary.
+		val domains = arrayOf("a.zazaza.me", "web.usagi.one")
 
 		private const val MAX_RETRIES = 3
 		private const val RETRY_DELAY_MS = 2000L
