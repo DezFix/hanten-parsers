@@ -24,10 +24,10 @@ internal class UsagiParser(
 
 	// Usagi runs a stricter anti-bot filter than its sister sites ("Ошибка =)" 500 page,
 	// "NOT FOUND" stubs, "логи записаны, скоро починим").
-	// The shared ancient Arora-based UA scores high on bot checks, so Usagi gets
-	// a modern Chrome UA by default. Users can still override it in source settings.
-	override val userAgentKey = ConfigKey.UserAgent(CHROME_UA)
-
+	// NOTE: do NOT override the user agent here: probing shows the site serves
+	// the full pages to the shared Arora-based UA but answers common Chrome UAs
+	// with stubs, so a "modern" UA makes things worse. Users can still override
+	// it in source settings.
 	override fun getRequestHeaders() = super.getRequestHeaders().newBuilder()
 		.add("referer", "https://$domain/")
 		.set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
@@ -82,7 +82,5 @@ internal class UsagiParser(
 		private const val MAX_RETRIES = 3
 		private const val RETRY_DELAY_MS = 2000L
 		private val TRANSIENT_CODES = intArrayOf(429, 500, 502, 503)
-		private const val CHROME_UA =
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 	}
 }
