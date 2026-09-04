@@ -13,6 +13,7 @@ import hanten.wre.app.parsers.util.*
 internal class YaoiChanParser(context: MangaLoaderContext) : ChanParser(context, MangaParserSource.YAOICHAN) {
 
 	override val configKeyDomain = ConfigKey.Domain(
+		"v18.yaoi-chan.me",
 		"v9.yaoi-chan.me",
 		"v10.yaoi-chan.me",
 		"v3.yaoi-chan.me",
