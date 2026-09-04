@@ -704,6 +704,14 @@ internal abstract class GroupleParser(
         }
         if (code == HttpURLConnection.HTTP_NOT_FOUND) {
             if (!hasAuthCookie()) {
+                // Anti-bot stubs ("NOT FOUND", a few bytes) are not auth walls:
+                // sending users to login in vain only confuses. Fail honestly instead.
+                // Unknown/large bodies keep the old behavior (some sites hide auth walls behind 404).
+                val length = headersContentLength()
+                if (length in 0..1024) {
+                    closeQuietly()
+                    throw ParseException("Page not found (anti-bot stub?)", request.url.toString())
+                }
                 closeQuietly()
                 throw AuthRequiredException(source)
             } else {
