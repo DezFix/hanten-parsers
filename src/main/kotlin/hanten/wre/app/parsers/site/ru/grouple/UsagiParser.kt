@@ -13,6 +13,8 @@ import hanten.wre.app.parsers.model.MangaParserSource
 import hanten.wre.app.parsers.model.SortOrder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.jsoup.HttpStatusException
 
 @MangaSourceParser("USAGI", "Usagi", "ru")
@@ -38,19 +40,29 @@ internal class UsagiParser(
 		.add("Sec-Fetch-User", "?1")
 		.build()
 
+	// The site throttles parallel/rapid requests per IP ("NOT FOUND", tarpit, 500).
+	// All document requests go through a single-flight mutex with gentle pacing,
+	// so at most one request at a time ever hits the site from this process.
+	private val requestMutex = Mutex()
+
 	// Anti-bot stubs are often transient: retry document requests with backoff.
 	// Auth and cancellation are never retried.
 	override suspend fun getList(offset: Int, order: SortOrder, filter: MangaListFilter): List<Manga> =
-		retryOnAntiBot { super.getList(offset, order, filter) }
+		serialized { retryOnAntiBot { super.getList(offset, order, filter) } }
 
 	override suspend fun getDetails(manga: Manga): Manga =
-		retryOnAntiBot { super.getDetails(manga) }
+		serialized { retryOnAntiBot { super.getDetails(manga) } }
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> =
-		retryOnAntiBot { super.getPages(chapter) }
+		serialized { retryOnAntiBot { super.getPages(chapter) } }
 
 	override suspend fun getRelatedManga(seed: Manga): List<Manga> =
-		retryOnAntiBot { super.getRelatedManga(seed) }
+		serialized { super.getRelatedManga(seed) }
+
+	private suspend fun <T> serialized(block: suspend () -> T): T = requestMutex.withLock {
+		delay(PACING_MS)
+		block()
+	}
 
 	private suspend fun <T> retryOnAntiBot(block: suspend () -> T): T {
 		var lastError: Throwable? = null
@@ -81,6 +93,7 @@ internal class UsagiParser(
 
 		private const val MAX_RETRIES = 3
 		private const val RETRY_DELAY_MS = 2000L
+		private const val PACING_MS = 1000L
 		private val TRANSIENT_CODES = intArrayOf(429, 500, 502, 503)
 	}
 }
