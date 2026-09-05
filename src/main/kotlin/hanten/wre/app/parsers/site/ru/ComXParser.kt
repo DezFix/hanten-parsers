@@ -1,5 +1,8 @@
 package hanten.wre.app.parsers.site.ru
 
+import okhttp3.FormBody
+import okhttp3.Interceptor
+import okhttp3.Response
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
@@ -16,12 +19,14 @@ import hanten.wre.app.parsers.util.json.getIntOrDefault
 import hanten.wre.app.parsers.util.json.getStringOrNull
 import hanten.wre.app.parsers.util.suspendlazy.getOrNull
 import hanten.wre.app.parsers.util.suspendlazy.suspendLazy
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.*
 
 @MangaSourceParser("COMX", "Com-X", "ru", ContentType.COMICS)
 internal class ComXParser(context: MangaLoaderContext) :
-	PagedMangaParser(context, MangaParserSource.COMX, 20) {
+	PagedMangaParser(context, MangaParserSource.COMX, 20),
+	Interceptor {
 
 	override val configKeyDomain = ConfigKey.Domain("com-x.life", "comx.life")
 
@@ -83,9 +88,14 @@ internal class ComXParser(context: MangaLoaderContext) :
 		if (posters.isNotEmpty()) {
 			return posters.mapNotNull(::parsePoster)
 		}
-		val legacy = root.select(".readed .readed__title a[href], li.latest.grid-item a[href*=.html]")
+		val legacy = root.select(".readed .readed__title a[href], li.latest.grid-item a[href$=\".html\"]")
 		if (legacy.isNotEmpty()) {
 			return legacy.mapNotNull(::parseLegacyLink)
+		}
+		if (!filter.query.isNullOrEmpty() &&
+			root.getElementsContainingOwnText("Ничего не найдено").isNotEmpty()
+		) {
+			return emptyList()
 		}
 		doc.parseFailed("No manga items found")
 	}
@@ -280,6 +290,121 @@ internal class ComXParser(context: MangaLoaderContext) :
 		) {
 			throw AuthRequiredException(source)
 		}
+	}
+
+	// The site guards content pages with a JS proof-of-work challenge
+	// (302 to /_c, SHA-256(token:nonce) starting with "00", POST to /_v).
+	// Solve it here so plain OkHttp requests pass without a WebView.
+	override fun intercept(chain: Interceptor.Chain): Response {
+		val request = chain.request()
+		if (!request.url.host.endsWith(domain) || isGuardCall(request)) {
+			return chain.proceed(request)
+		}
+		val response = chain.proceed(request)
+		val guardUrl = findGuardUrl(request, response) ?: return response
+		response.close()
+		return try {
+			solveGuard(chain, guardUrl)
+			chain.proceed(request)
+		} catch (e: Exception) {
+			if (e is InterruptedException) {
+				Thread.currentThread().interrupt()
+			}
+			chain.proceed(request)
+		}
+	}
+
+	private fun isGuardCall(request: okhttp3.Request): Boolean {
+		val path = request.url.encodedPath
+		return path == "/_c" || path == "/_v"
+	}
+
+	private fun findGuardUrl(request: okhttp3.Request, response: Response): String? {
+		if (response.code in 301..308) {
+			val location = response.header("Location") ?: return null
+			if ("/_c?" in location) {
+				return request.url.resolve(location)?.toString()
+			}
+			return null
+		}
+		if (response.code == 404) {
+			val peek = runCatching { response.peekBody(32 * 1024).string() }.getOrNull()
+			if (peek != null && "pow_nonce" in peek) {
+				val token = Regex("""token:\s*"([^"]+)"""").find(peek)?.groupValues?.get(1)
+					?: return null
+				return request.url.newBuilder().encodedPath("/_c")
+					.addQueryParameter("t", token).build().toString()
+			}
+		}
+		return null
+	}
+
+	private fun solveGuard(chain: Interceptor.Chain, guardUrl: String) {
+		val guardRequest = chain.request().newBuilder().url(guardUrl).get().build()
+		val guardBody = chain.proceed(guardRequest).use { resp ->
+			if (!resp.isSuccessful && resp.code != 404) {
+				throw ParseException("Guard check failed: ${resp.code}", guardUrl)
+			}
+			resp.requireBody().string()
+		}
+		val token = Regex("""token:\s*"([^"]+)"""").find(guardBody)?.groupValues?.get(1)
+			?: throw ParseException("Guard token not found", guardUrl)
+		val (nonce, hash) = solvePow(token)
+		val form = FormBody.Builder()
+			.add("token", token)
+			.add("mode", "modern")
+			.add("workTime", "380")
+			.add("iterations", (nonce + 50).toString())
+			.add("hasCrypto", "1")
+			.add("pow_nonce", nonce.toString())
+			.add("pow_hash", hash)
+			.add("webdriver", "0")
+			.add("touch", "0")
+			.add("screen_w", "1920")
+			.add("screen_h", "1080")
+			.add("screen_cd", "24")
+			.add("tz", "-180")
+			.add("dpr", "1")
+			.add("cdp", "0")
+			.add("cdpf", "")
+			.build()
+		val verifyUrl = guardRequest.url.newBuilder().encodedPath("/_v").query(null).build()
+		val verifyRequest = chain.request().newBuilder()
+			.url(verifyUrl)
+			.post(form)
+			.header("Referer", guardUrl)
+			.header("Origin", "${guardRequest.url.scheme}://${guardRequest.url.host}")
+			.header("X-Requested-With", "XMLHttpRequest")
+			.build()
+		chain.proceed(verifyRequest).use { resp ->
+			if (!resp.isSuccessful) {
+				throw ParseException("Guard verification failed: ${resp.code}", verifyUrl.toString())
+			}
+			resp.requireBody().close()
+		}
+	}
+
+	private fun solvePow(token: String): Pair<Long, String> {
+		val digest = MessageDigest.getInstance("SHA-256")
+		val hex = "0123456789abcdef".toCharArray()
+		var nonce = 0L
+		while (nonce < 5_000_000L) {
+			if (Thread.currentThread().isInterrupted) {
+				throw InterruptedException()
+			}
+			val hash = digest.digest("$token:$nonce".toByteArray())
+			val sb = StringBuilder(hash.size * 2)
+			for (b in hash) {
+				val v = b.toInt() and 0xFF
+				sb.append(hex[v ushr 4]).append(hex[v and 0x0F])
+			}
+			if (sb[0] == '0' && sb[1] == '0') {
+				return nonce to sb.toString()
+			}
+			nonce++
+			digest.reset()
+		}
+		throw ParseException("Guard PoW not solved", token.take(16))
 	}
 
 	private fun decodeText(text: String?): String? {
