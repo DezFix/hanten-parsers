@@ -98,9 +98,16 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 					chapterNum
 				}
 				val volume = jo.getIntOrDefault("volume", 0)
+				val rawTitle = jo.getStringOrNull("title")?.trim()
 				MangaChapter(
 					id = generateUid(chapterId),
-					title = jo.getStringOrNull("title")?.takeIf { it.isNotBlank() && it != "title" },
+					// API returns a "title" placeholder when a chapter has no name;
+					// fall back to the site's own "Том V - Розділ N" format.
+					title = if (rawTitle.isNullOrEmpty() || rawTitle.equals("title", ignoreCase = true)) {
+						"Том $volume - Розділ ${number.formatSimple()}"
+					} else {
+						rawTitle
+					},
 					number = number,
 					volume = volume,
 					url = chapterId + "|" + manga.url,
