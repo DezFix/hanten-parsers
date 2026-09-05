@@ -453,7 +453,17 @@ internal abstract class MangaPlusParser(
 		context,
 		MangaParserSource.MANGAPLUSPARSER_RU,
 		"RUSSIAN",
-	)
+	) {
+
+		// The Russian catalogue is tiny (about a dozen titles), so the
+		// "updated" feed usually holds a single work. Open on the full
+		// alphabetical list instead.
+		override val availableSortOrders: Set<SortOrder> = linkedSetOf(
+			SortOrder.ALPHABETICAL,
+			SortOrder.POPULARITY,
+			SortOrder.UPDATED,
+		)
+	}
 
 	@MangaSourceParser("MANGAPLUSPARSER_TH", "MANGA Plus Thai", "th")
 	class Thai(context: MangaLoaderContext) : MangaPlusParser(
