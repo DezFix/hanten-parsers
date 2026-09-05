@@ -300,18 +300,22 @@ internal class ComXParser(context: MangaLoaderContext) :
 		if (!request.url.host.endsWith(domain) || isGuardCall(request)) {
 			return chain.proceed(request)
 		}
-		val response = chain.proceed(request)
-		val guardUrl = findGuardUrl(request, response) ?: return response
-		response.close()
-		return try {
-			solveGuard(chain, guardUrl)
-			chain.proceed(request)
-		} catch (e: Exception) {
-			if (e is InterruptedException) {
-				Thread.currentThread().interrupt()
+		var response = chain.proceed(request)
+		// Up to two unlock rounds: the challenge markup varies between
+		// renders, so a first attempt may grab a stale token.
+		repeat(2) {
+			val guard = findGuard(request, response) ?: return response
+			response.close()
+			try {
+				solveGuard(chain, guard)
+			} catch (e: Exception) {
+				if (e is InterruptedException) {
+					Thread.currentThread().interrupt()
+				}
 			}
-			chain.proceed(request)
+			response = chain.proceed(request)
 		}
+		return response
 	}
 
 	private fun isGuardCall(request: okhttp3.Request): Boolean {
@@ -319,36 +323,50 @@ internal class ComXParser(context: MangaLoaderContext) :
 		return path == "/_c" || path == "/_v"
 	}
 
-	private fun findGuardUrl(request: okhttp3.Request, response: Response): String? {
+	private data class Guard(val url: String, val token: String?)
+
+	private fun findGuard(request: okhttp3.Request, response: Response): Guard? {
 		if (response.code in 301..308) {
 			val location = response.header("Location") ?: return null
 			if ("/_c?" in location) {
-				return request.url.resolve(location)?.toString()
+				val url = request.url.resolve(location)?.toString() ?: return null
+				return Guard(url, null)
 			}
 			return null
 		}
 		if (response.code == 404) {
-			val peek = runCatching { response.peekBody(32 * 1024).string() }.getOrNull()
+			val peek = runCatching { response.peekBody(64 * 1024).string() }.getOrNull()
 			if (peek != null && "pow_nonce" in peek) {
-				val token = Regex("""token:\s*"([^"]+)"""").find(peek)?.groupValues?.get(1)
-					?: return null
-				return request.url.newBuilder().encodedPath("/_c")
-					.addQueryParameter("t", token).build().toString()
+				// The challenge URL is already final (redirects are followed);
+				// reuse it, token is re-read inside solveGuard.
+				return Guard(request.url.toString(), extractToken(peek))
 			}
 		}
 		return null
 	}
 
-	private fun solveGuard(chain: Interceptor.Chain, guardUrl: String) {
-		val guardRequest = chain.request().newBuilder().url(guardUrl).get().build()
+	private fun extractToken(html: String): String? {
+		Regex("""var p\s*=\s*\{\s*token:\s*"([^"]+)"""").find(html)?.let {
+			return it.groupValues[1]
+		}
+		// Fallback: longest token-like match (challenge renders vary,
+		// short debug strings may come first).
+		return Regex("""token:\s*"([^"]+)"""").findAll(html)
+			.map { it.groupValues[1] }
+			.filter { it.length >= 40 }
+			.maxByOrNull { it.length }
+	}
+
+	private fun solveGuard(chain: Interceptor.Chain, guard: Guard) {
+		val guardRequest = chain.request().newBuilder().url(guard.url).get().build()
 		val guardBody = chain.proceed(guardRequest).use { resp ->
 			if (!resp.isSuccessful && resp.code != 404) {
-				throw ParseException("Guard check failed: ${resp.code}", guardUrl)
+				throw ParseException("Guard check failed: ${resp.code}", guard.url)
 			}
 			resp.requireBody().string()
 		}
-		val token = Regex("""token:\s*"([^"]+)"""").find(guardBody)?.groupValues?.get(1)
-			?: throw ParseException("Guard token not found", guardUrl)
+		val token = extractToken(guardBody) ?: guard.token
+		?: throw ParseException("Guard token not found", guard.url)
 		val (nonce, hash) = solvePow(token)
 		val form = FormBody.Builder()
 			.add("token", token)
@@ -372,7 +390,7 @@ internal class ComXParser(context: MangaLoaderContext) :
 		val verifyRequest = chain.request().newBuilder()
 			.url(verifyUrl)
 			.post(form)
-			.header("Referer", guardUrl)
+			.header("Referer", guard.url)
 			.header("Origin", "${guardRequest.url.scheme}://${guardRequest.url.host}")
 			.header("X-Requested-With", "XMLHttpRequest")
 			.build()
