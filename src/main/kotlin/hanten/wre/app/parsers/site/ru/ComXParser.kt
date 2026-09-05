@@ -1,6 +1,7 @@
 package hanten.wre.app.parsers.site.ru
 
 import okhttp3.FormBody
+import okhttp3.Headers
 import okhttp3.Interceptor
 import okhttp3.Response
 import org.json.JSONObject
@@ -41,6 +42,12 @@ internal class ComXParser(context: MangaLoaderContext) :
 	init {
 		context.cookieJar.insertCookies(domain, "adt-accepted", "1")
 	}
+
+	// The site only serves the real content to browser-like requesters:
+	// a full UA without Accept-Language gets a JS spinner page instead.
+	override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
+		.add("Accept-Language", "ru,en;q=0.9")
+		.build()
 
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(SortOrder.UPDATED)
 
@@ -337,9 +344,9 @@ internal class ComXParser(context: MangaLoaderContext) :
 		if (response.code == 404) {
 			val peek = runCatching { response.peekBody(64 * 1024).string() }.getOrNull()
 			if (peek != null && "pow_nonce" in peek) {
-				// The challenge URL is already final (redirects are followed);
-				// reuse it, token is re-read inside solveGuard.
-				return Guard(request.url.toString(), extractToken(peek))
+				// Redirects are followed, so the challenge URL is the request
+				// actually served (the final /_c); the token is re-read below.
+				return Guard(response.request.url.toString(), extractToken(peek))
 			}
 		}
 		return null
