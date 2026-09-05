@@ -23,7 +23,7 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 private const val PAGE_SIZE = 20
-private const val INFINITE = 999999
+private const val CHAPTERS_PAGE_SIZE = 100
 private const val WEBVIEW_TIMEOUT_MS = 30000L
 private const val HEADER_ENCODING = "Content-Encoding"
 private const val IMAGE_BASEURL_FALLBACK = "https://hmvolumestorage.b-cdn.net/public-resources"
@@ -67,33 +67,66 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 
 	override suspend fun getDetails(manga: Manga): Manga {
 		val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-		val body = JSONObject()
-		body.put("mangaId", manga.url)
-		body.put("pageSize", INFINITE) // Hack lol (no)
-		body.put("page", 1)
-		body.put("sortOrder", "ASC")
-		val chapterRequest = postApi(chapterApi, body)
-		val chapters = chapterRequest.optJSONArray("data")?.mapJSONNotNull { jo ->
-			val chapterId = jo.getStringOrNull("id")
-				?: jo.getStringOrNull("chapterId")
-				?: jo.getStringOrNull("uuid")
-				?: return@mapJSONNotNull null
-			val number = jo.getFloatOrDefault("chapterNum", 0f)
-			val volume = jo.getIntOrDefault("volume", 0)
-			MangaChapter(
-				id = generateUid(chapterId),
-				title = jo.getStringOrNull("title"),
-				number = number,
-				volume = volume,
-				url = chapterId + "|" + manga.url,
-				scanlator = null,
-				uploadDate = jo.getStringOrNull("lastUpdated")?.let { dateFormat.parseSafe(it) } ?: 0L,
-				branch = null,
-				source = source,
-			)
-		}.orEmpty()
+		val chapters = ArrayList<MangaChapter>()
+		var page = 1
+		var lastResponse = JSONObject()
+		// API rejects huge pageSize (999999 -> 400 "invalid pageSize"),
+		// so paginate with a safe pageSize until cursorNext is null.
+		while (true) {
+			val body = JSONObject()
+			body.put("mangaId", manga.url)
+			body.put("page", page)
+			body.put("pageSize", CHAPTERS_PAGE_SIZE)
+			body.put("sortOrder", "ASC")
+			val chapterRequest = postApi(chapterApi, body)
+			lastResponse = chapterRequest
+			val data = chapterRequest.optJSONArray("data") ?: break
+			if (data.length() == 0) {
+				break
+			}
+			data.mapJSONNotNull { jo ->
+				val chapterId = jo.getStringOrNull("id")
+					?: jo.getStringOrNull("chapterId")
+					?: jo.getStringOrNull("uuid")
+					?: return@mapJSONNotNull null
+				val chapterNum = jo.getFloatOrDefault("chapterNum", 0f)
+				val subChapterNum = jo.optInt("subChapterNum", 0)
+				val number = if (subChapterNum > 0) {
+					val base = if (chapterNum % 1f == 0f) chapterNum.toInt().toString() else chapterNum.toString()
+					"$base.$subChapterNum".toFloatOrNull() ?: (chapterNum + subChapterNum / 10f)
+				} else {
+					chapterNum
+				}
+				val volume = jo.getIntOrDefault("volume", 0)
+				MangaChapter(
+					id = generateUid(chapterId),
+					title = jo.getStringOrNull("title")?.takeIf { it.isNotBlank() && it != "title" },
+					number = number,
+					volume = volume,
+					url = chapterId + "|" + manga.url,
+					scanlator = null,
+					uploadDate = jo.getStringOrNull("lastUpdated")?.substringBefore('.')
+						?.let { dateFormat.parseSafe(it) } ?: 0L,
+					branch = null,
+					source = source,
+				)
+			}.let(chapters::addAll)
+			val counter = chapterRequest.optInt("counter", -1)
+			if (counter > 0 && chapters.size >= counter) {
+				break
+			}
+			// cursorNext == null means last page
+			if (chapterRequest.isNull("cursorNext")) {
+				break
+			}
+			page++
+			if (page > 50) {
+				// Safety guard: 50 * 100 = 5000 chapters max
+				break
+			}
+		}
 		if (chapters.isEmpty()) {
-			checkEmptyChapters(manga.url, chapterRequest)
+			checkEmptyChapters(manga.url, lastResponse)
 		}
 		return manga.copy(chapters = chapters)
 	}
@@ -174,12 +207,8 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 				contentRating = if (isNsfwSource) ContentRating.ADULT else null,
 				coverUrl = getCoverUrl(posterUrl, 256),
 				tags = getTitleTags(jo.optJSONArray("genresAndTags")),
-				state = when (jo.getStringOrNull("titleStatus")) {
-					"Онгоінг" -> MangaState.ONGOING
-					"Завершено" -> MangaState.FINISHED
-					else -> null
-				},
-				authors = emptySet(),
+				state = parseStatus(jo.getStringOrNull("titleStatus")),
+				authors = parseAuthors(jo),
 				largeCoverUrl = getCoverUrl(posterUrl, 1080),
 				description = jo.getStringOrNull("description"),
 				chapters = null,
@@ -189,16 +218,38 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val parts = chapter.url.split('|')
-		if (parts.size != 2) {
-			throw ParseException("Invalid chapter url", chapter.url)
-		}
-		val content = webClient.httpGet("$framesApi/${parts[0]}/${parts[1]}").parseJson().getJSONObject("resourceIds")
+		val content = fetchFrames(chapter.url).getJSONObject("resourceIds")
 		val baseUrl = imageStorageUrl.getOrNull() ?: IMAGE_BASEURL_FALLBACK
 		return List(content.length()) { i ->
 			val item = content.getString(i.toString())
 			MangaPage(id = generateUid(item), "$baseUrl/$item", getCoverUrl(item, 256), source)
 		}
+	}
+
+	private suspend fun fetchFrames(chapterUrl: String): JSONObject {
+		// Current format: "<chapterId>|<mangaId>".
+		// NOTE: old base /chapter/frames/<cid>/<mid> returns 404,
+		// use /v2/chapter/frames/<cid>/<mid> with fallback to single-id legacy call.
+		val pipe = chapterUrl.split("|")
+		if (pipe.size == 2) {
+			val (cid, mid) = pipe
+			return try {
+				webClient.httpGet("$urlApi/v2/chapter/frames/$cid/$mid").parseJson()
+			} catch (e: Exception) {
+				webClient.httpGet("$framesApi/$cid").parseJson()
+			}
+		}
+		// Transitional "<mangaId>/<resourcesId>" and legacy single-id formats
+		val slash = chapterUrl.split("/")
+		if (slash.size == 2) {
+			val (mid, rid) = slash
+			return try {
+				webClient.httpGet("$urlApi/v2/chapter/frames/$rid/$mid").parseJson()
+			} catch (e: Exception) {
+				webClient.httpGet("$framesApi/$rid").parseJson()
+			}
+		}
+		return webClient.httpGet("$framesApi/$chapterUrl").parseJson()
 	}
 
 	private suspend fun fetchAvailableTags(): Set<MangaTag> {
@@ -239,14 +290,46 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 		else -> "likes"
 	}
 
-	private fun getTitleTags(jsonTags: JSONArray): Set<MangaTag> {
+	private fun getTitleTags(jsonTags: JSONArray?): Set<MangaTag> {
+		if (jsonTags == null) {
+			return emptySet()
+		}
 		val tagsSet = ArraySet<MangaTag>(jsonTags.length())
 		repeat(jsonTags.length()) { i ->
-			val item = jsonTags.getString(i)
+			val item = jsonTags.optString(i).takeIf { it.isNotEmpty() } ?: return@repeat
 
 			tagsSet.add(MangaTag(title = item.toTitleCase(sourceLocale), key = item, source = source))
 		}
 		return tagsSet
+	}
+
+	private fun parseStatus(value: String?): MangaState? {
+		if (value.isNullOrBlank()) {
+			return null
+		}
+		val v = value.lowercase(Locale.ROOT)
+		return when {
+			"заверш" in v || "finish" in v || "complete" in v -> MangaState.FINISHED
+			"анонс" in v || "upcoming" in v || "announce" in v -> MangaState.UPCOMING
+			"онг" in v || "онґ" in v || "ongoing" in v -> MangaState.ONGOING
+			// Legacy value "Онгоінг" also contains "онг", kept for compatibility
+			else -> null
+		}
+	}
+
+	private fun parseAuthors(jo: JSONObject): Set<String> {
+		val result = LinkedHashSet<String>()
+		jo.optJSONArray("authors")?.let { arr ->
+			repeat(arr.length()) { i ->
+				arr.optString(i).takeIf { it.isNotBlank() }?.let(result::add)
+			}
+		}
+		jo.optJSONArray("artists")?.let { arr ->
+			repeat(arr.length()) { i ->
+				arr.optString(i).takeIf { it.isNotBlank() }?.let(result::add)
+			}
+		}
+		return result
 	}
 
 	private suspend fun postApi(url: String, body: JSONObject): JSONObject {
@@ -276,12 +359,20 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 	}
 
 	private suspend fun fetchCoversBaseUrl(): String {
-		val scriptUrl = webClient.httpGet("https://$domain")
-			.parseHtml()
-			.select("script")
-			.firstNotNullOf { it.attrOrNull("src")?.takeIf { x -> x.contains("_app-") } }
-		val script = webClient.httpGet(scriptUrl).parseRaw()
-		// "vg":"https://hmvolumestorage.b-cdn.net/public-resources"
-		return Regex("\"vg\":\"([^\"]+)\"").find(script)?.groups?.get(1)?.value ?: error("Image baseUrl not found")
+		return try {
+			val scriptUrl = webClient.httpGet("https://$domain")
+				.parseHtml()
+				.select("script")
+				.firstNotNullOf { it.attrOrNull("src")?.takeIf { x -> x.contains("_app-") } }
+			val script = webClient.httpGet(scriptUrl).parseRaw()
+			// Old: "vg":"https://hmvolumestorage.b-cdn.net/public-resources"
+			// New (_app chunk): En:"https://hmvolumestorage.b-cdn.net/public-resources"
+			Regex("\"vg\"\\s*:\\s*\"([^\"]+)\"").find(script)?.groups?.get(1)?.value
+				?: Regex("\\bEn\\s*:\\s*\"(https://[^\"]+)\"").find(script)?.groups?.get(1)?.value
+				?: Regex("(https://[a-z0-9\\-./]*b-cdn\\.net/public-resources)").find(script)?.value
+				?: IMAGE_BASEURL_FALLBACK
+		} catch (e: Exception) {
+			IMAGE_BASEURL_FALLBACK
+		}
 	}
 }
