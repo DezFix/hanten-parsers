@@ -8,6 +8,8 @@ import hanten.wre.app.parsers.core.PagedMangaParser
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
 import hanten.wre.app.parsers.util.json.*
+import kotlinx.coroutines.delay
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -43,7 +45,7 @@ internal class WaMangaParser(
 				append(it.urlEncoded())
 			}
 		}
-		return webClient.httpGet(url).parseJsonArray().mapJSON { parseManga(it) }
+		return retryIO { webClient.httpGet(url).parseJsonArray() }.mapJSON { parseManga(it) }
 	}
 
 	private fun parseManga(jo: JSONObject): Manga {
@@ -71,8 +73,10 @@ internal class WaMangaParser(
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		val jo = webClient.httpGet("${apiUrl()}/manga/${manga.url}").parseJson()
-		val chaptersJson = webClient.httpGet("${apiUrl()}/manga/${manga.url}/chapters").parseJsonArray()
+		val jo = retryIO { webClient.httpGet("${apiUrl()}/manga/${manga.url}").parseJson() }
+		val chaptersJson = retryIO {
+			webClient.httpGet("${apiUrl()}/manga/${manga.url}/chapters").parseJsonArray()
+		}
 		val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", sourceLocale)
 		val scanlator = jo.optJSONArray("teams")
 			?.mapJSON { it.getStringOrNull("name") }
@@ -105,10 +109,11 @@ internal class WaMangaParser(
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		return webClient.httpGet("${apiUrl()}/chapters/${chapter.url}")
-			.parseJson()
-			.getJSONArray("files")
-			.mapJSON { file ->
+		return retryIO {
+			webClient.httpGet("${apiUrl()}/chapters/${chapter.url}")
+				.parseJson()
+				.getJSONArray("files")
+		}.mapJSON { file ->
 				val img = file.getString("diskFile").toAbsoluteUrl(domain)
 				MangaPage(
 					id = generateUid(img),
@@ -144,5 +149,23 @@ internal class WaMangaParser(
 		"abandoned" -> MangaState.ABANDONED
 		"paused", "frozen" -> MangaState.PAUSED
 		else -> null
+	}
+
+	// The host stalls intermittently; retry network failures once after a short pause.
+	private suspend fun <T> retryIO(times: Int = 2, block: suspend () -> T): T {
+		var error: IOException? = null
+		repeat(times) { attempt ->
+			try {
+				return block()
+			} catch (e: kotlinx.coroutines.CancellationException) {
+				throw e
+			} catch (e: IOException) {
+				error = e
+				if (attempt + 1 < times) {
+					delay(1000)
+				}
+			}
+		}
+		throw error!!
 	}
 }
