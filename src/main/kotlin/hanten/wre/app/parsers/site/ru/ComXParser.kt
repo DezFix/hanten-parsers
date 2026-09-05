@@ -1,4 +1,4 @@
-package hanten.wre.app.parsers.site.en
+package hanten.wre.app.parsers.site.ru
 
 import org.json.JSONObject
 import hanten.wre.app.parsers.MangaLoaderContext
