@@ -1,5 +1,6 @@
 package hanten.wre.app.parsers.site.ru.grouple
 
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
@@ -17,6 +18,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.jsoup.HttpStatusException
 
+// HIDDEN (2026-09-06): the site blocks all manga pages for non-browser clients
+// ("Ошибка =)" 500 / "NOT FOUND" stubs) and the a.zazaza.me mirror is dead.
+// Restore by removing @Broken when the site recovers.
+@Broken("Manga pages blocked by site anti-bot (500 / NOT FOUND); a.zazaza.me mirror is down")
 @MangaSourceParser("USAGI", "Usagi", "ru")
 internal class UsagiParser(
 	context: MangaLoaderContext,
