@@ -1,5 +1,6 @@
 package hanten.wre.app.parsers.site.ru
 
+import okhttp3.Headers
 import org.jsoup.nodes.Element
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
@@ -27,6 +28,10 @@ internal class MangaLibComParser(
 
 	override suspend fun getFilterOptions() = MangaListFilterOptions()
 
+	override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
+		.set("Referer", "https://$domain/manga/")
+		.build()
+
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
 		val query = filter.query?.takeIf { it.isNotEmpty() }
 		val url = if (query != null) {
@@ -45,45 +50,15 @@ internal class MangaLibComParser(
 		} else {
 			"https://$domain/manga/"
 		}
-		val doc = webClient.httpGet(url).parseHtml()
-		if (query != null) {
-			val results = doc.select("article.short-tablet").mapNotNull(::parseSearchResult)
-			if (results.isNotEmpty()) {
-				return results
-			}
-			if (doc.getElementsContainingOwnText("найдено 0").isNotEmpty()) {
-				return emptyList()
-			}
+		val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+		val results = doc.select("article.short-tablet").mapNotNull(::parseSearchResult)
+		if (results.isNotEmpty()) {
+			return results
 		}
-		val cards = doc.select("a.tc-item[href]").mapNotNull(::parseCard)
-		if (cards.isEmpty()) {
-			doc.parseFailed("No manga items found")
+		if (query != null && doc.getElementsContainingOwnText("найдено 0").isNotEmpty()) {
+			return emptyList()
 		}
-		return cards
-	}
-
-	private fun parseCard(a: Element): Manga? {
-		val href = a.attrAsRelativeUrl("href")
-		if (!href.endsWith(".html")) {
-			return null
-		}
-		val title = a.selectFirst(".tc-title")?.text()?.trim()?.cleanTitle()
-			?.takeUnless { it.isEmpty() } ?: return null
-		return Manga(
-			id = generateUid(href),
-			url = href,
-			publicUrl = a.attrAsAbsoluteUrl("href"),
-			title = title,
-			altTitles = emptySet(),
-			authors = emptySet(),
-			description = null,
-			tags = emptySet(),
-			rating = RATING_UNKNOWN,
-			state = null,
-			coverUrl = a.selectFirst(".img-box img")?.attrAsAbsoluteUrlOrNull("src"),
-			contentRating = null,
-			source = source,
-		)
+		doc.parseFailed("No manga items found")
 	}
 
 	private fun parseSearchResult(article: Element): Manga? {
@@ -108,7 +83,7 @@ internal class MangaLibComParser(
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
+		val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
 		val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.US)
 		val info = doc.select("ul.mangainfo li").associate { li ->
 			val label = li.children().firstOrNull { it.tagName() == "span" }
@@ -164,7 +139,7 @@ internal class MangaLibComParser(
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
+		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
 		return doc.select("a.mangaPage[data-i]").mapNotNull { a ->
 			val url = a.attrAsAbsoluteUrlOrNull("data-i") ?: return@mapNotNull null
 			MangaPage(

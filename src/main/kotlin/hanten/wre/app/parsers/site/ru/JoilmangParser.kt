@@ -1,5 +1,7 @@
 package hanten.wre.app.parsers.site.ru
 
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
@@ -11,9 +13,10 @@ import hanten.wre.app.parsers.util.*
 import java.text.SimpleDateFormat
 import java.util.*
 
-// NOTE: the site sits behind Vercel Security Checkpoint ("We're verifying your
-// browser" 429 page) which selectively challenges non-browser clients.
-// If the checkpoint triggers on your network, this source will fail.
+// The site sits behind a Vercel Security Checkpoint ("We're verifying your
+// browser" 429 page) that rejects plain HTTP clients with 429 Too Many
+// Requests. All page fetches go through WebView (context.evaluateJs), which
+// executes the checkpoint's JavaScript and then returns the rendered DOM.
 @MangaSourceParser("JOILMANG", "JoiMang", "ru")
 internal class JoilmangParser(
 	context: MangaLoaderContext,
@@ -29,6 +32,44 @@ internal class JoilmangParser(
 		)
 
 	override suspend fun getFilterOptions() = MangaListFilterOptions()
+
+	private suspend fun fetchDocument(url: String): Document {
+		val script = """
+			(() => {
+				const checkpoint = (document.title || '').toLowerCase().includes('verifying your browser') ||
+					(document.body && document.body.innerText.includes('Vercel Security Checkpoint'));
+				if (checkpoint) {
+					return 'VERCEL_CHECKPOINT';
+				}
+				const ready = document.body && document.querySelector(
+					'a.jm-card-hover, main, header, h1.section-heading, details ol, picture[data-reader-page]'
+				);
+				if (ready) {
+					window.stop();
+					const elementsToRemove = document.querySelectorAll('script, iframe, object, embed, style');
+					elementsToRemove.forEach(el => el.remove());
+					return document.documentElement.outerHTML;
+				}
+				return null;
+			})();
+		""".trimIndent()
+		val rawHtml = context.evaluateJs(url, script, 30000L)
+			?: throw ParseException("Failed to load page", url)
+		if (rawHtml == "VERCEL_CHECKPOINT") {
+			throw ParseException("Vercel checkpoint was not resolved", url)
+		}
+		val html = if (rawHtml.startsWith("\"") && rawHtml.endsWith("\"")) {
+			rawHtml.substring(1, rawHtml.length - 1)
+				.replace("\\\"", "\"")
+				.replace("\\n", "\n")
+				.replace("\\r", "\r")
+				.replace("\\t", "\t")
+				.replace(Regex("""\\u([0-9A-Fa-f]{4})""")) { match ->
+					match.groupValues[1].toInt(16).toChar().toString()
+				}
+		} else rawHtml
+		return Jsoup.parse(html, url)
+	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
 		val url = buildString {
@@ -47,7 +88,7 @@ internal class JoilmangParser(
 				append(params.joinToString("&"))
 			}
 		}
-		val doc = webClient.httpGet(url).parseHtml()
+		val doc = fetchDocument(url)
 		val cards = doc.select("a.jm-card-hover[href]").mapNotNull(::parseCard)
 		if (cards.isEmpty()) {
 			doc.parseFailed("No manga items found")
@@ -82,7 +123,7 @@ internal class JoilmangParser(
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
+		val doc = fetchDocument(manga.url.toAbsoluteUrl(domain))
 		val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.US)
 		val title = doc.selectFirst("h1.section-heading")?.text()?.trim()?.takeUnless { it.isEmpty() }
 			?: manga.title
@@ -161,7 +202,7 @@ internal class JoilmangParser(
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain)).parseHtml()
+		val doc = fetchDocument(chapter.url.toAbsoluteUrl(domain))
 		return doc.select("picture[data-reader-page] img[src]").mapNotNull { img ->
 			val url = img.attrAsAbsoluteUrlOrNull("src") ?: return@mapNotNull null
 			MangaPage(
