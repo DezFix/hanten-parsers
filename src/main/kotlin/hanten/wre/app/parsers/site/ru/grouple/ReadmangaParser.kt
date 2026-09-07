@@ -19,6 +19,8 @@ internal class ReadmangaParser(
     companion object {
 
         val domains = arrayOf(
+            // a.zazaza.me is dead (connection refused); readmanga.me is the live host
+            "readmanga.me",
             "a.zazaza.me",
         )
     }

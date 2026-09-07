@@ -32,6 +32,9 @@ import hanten.wre.app.parsers.util.parseJson
 import hanten.wre.app.parsers.util.parseSafe
 import hanten.wre.app.parsers.util.toAbsoluteUrl
 import hanten.wre.app.parsers.util.suspendlazy.suspendLazy
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.EnumSet
 import java.util.LinkedHashSet
@@ -130,17 +133,19 @@ internal class TomiloLib(context: MangaLoaderContext) :
 		val url = apiUrl("titles/slug/$slug").newBuilder()
 			.addQueryParameter("populateChapters", "true")
 			.build()
-		val info = webClient.httpGet(url, getRequestHeaders())
-			.parseJson()
-			.optJSONObject("data")
-			?: throw ParseException("Cannot parse title details", manga.url)
+		val info = retryIO {
+			webClient.httpGet(url, getRequestHeaders())
+				.parseJson()
+				.optJSONObject("data")
+		} ?: throw ParseException("Cannot parse title details", manga.url)
 		if (info.isAdult()) {
 			throw ParseException("Adult titles are not supported", manga.publicUrl)
 		}
 
 		val parsed = parseManga(info, withDetails = true) ?: manga
-		val chapters = parseChapters(info, slug).takeIf { it.isNotEmpty() }
-			?: fetchChapters(info.getStringOrNull("_id") ?: return parsed, slug)
+		// The embedded chapter list may be truncated, so the full list is
+		// always fetched page by page from the dedicated endpoint
+		val chapters = fetchChapters(info.getStringOrNull("_id") ?: return parsed, slug)
 		return parsed.copy(
 			id = manga.id,
 			url = manga.url,
@@ -153,11 +158,12 @@ internal class TomiloLib(context: MangaLoaderContext) :
 		val url = chapter.url.toAbsoluteUrl(domain).toHttpUrl()
 		val chapterId = url.pathSegments.lastOrNull()?.takeIf { it.isNotEmpty() }
 			?: throw ParseException("Cannot parse chapter id", chapter.url)
-		val pages = webClient.httpGet(apiUrl("chapters/$chapterId"), getRequestHeaders())
-			.parseJson()
-			.optJSONObject("data")
-			?.optJSONArray("pages")
-			?: throw ParseException("Cannot parse chapter pages", chapter.url)
+		val pages = retryIO {
+			webClient.httpGet(apiUrl("chapters/$chapterId"), getRequestHeaders())
+				.parseJson()
+				.optJSONObject("data")
+				?.optJSONArray("pages")
+		} ?: throw ParseException("Cannot parse chapter pages", chapter.url)
 		return (0 until pages.length()).mapNotNull { i ->
 			val path = pages.optString(i).takeIf { it.isNotBlank() } ?: return@mapNotNull null
 			MangaPage(
@@ -189,21 +195,36 @@ internal class TomiloLib(context: MangaLoaderContext) :
 	)
 
 	private suspend fun fetchChapters(titleId: String, slug: String): List<MangaChapter> {
-		return parseChapters(fetchChapterJson(titleId), titleId, slug)
+		val result = ArrayList<MangaChapter>()
+		var page = 1
+		while (page <= MAX_CHAPTER_PAGES) {
+			val batch = parseChapters(fetchChapterJson(titleId, page), titleId, slug)
+			if (batch.isEmpty()) {
+				break
+			}
+			result += batch
+			if (batch.size < CHAPTERS_PAGE_SIZE) {
+				break
+			}
+			page++
+		}
+		return result
 	}
 
-	private suspend fun fetchChapterJson(titleId: String): JSONArray {
-		return webClient.httpGet(
-			apiUrl("chapters/title/$titleId").newBuilder()
-				.addQueryParameter("page", "1")
-				.addQueryParameter("limit", "10000")
-				.addQueryParameter("sortOrder", "asc")
-				.build(),
-			getRequestHeaders(),
-		).parseJson()
-			.optJSONObject("data")
-			?.optJSONArray("chapters")
-			?: JSONArray()
+	private suspend fun fetchChapterJson(titleId: String, page: Int): JSONArray {
+		return retryIO {
+			webClient.httpGet(
+				apiUrl("chapters/title/$titleId").newBuilder()
+					.addQueryParameter("page", page.toString())
+					.addQueryParameter("limit", CHAPTERS_PAGE_SIZE.toString())
+					.addQueryParameter("sortOrder", "asc")
+					.build(),
+				getRequestHeaders(),
+			).parseJson()
+				.optJSONObject("data")
+				?.optJSONArray("chapters")
+				?: JSONArray()
+		}
 	}
 
 	private suspend fun parseManga(info: JSONObject?, withDetails: Boolean): Manga? {
@@ -239,15 +260,6 @@ internal class TomiloLib(context: MangaLoaderContext) :
 			description = if (withDetails) info.getStringOrNull("description") else null,
 			source = source,
 		)
-	}
-
-	private fun parseChapters(info: JSONObject, slug: String): List<MangaChapter> {
-		val titleId = info.getStringOrNull("_id") ?: return emptyList()
-		val chapters = info.optJSONArray("chapters") ?: return emptyList()
-		if (chapters.length() == 0 || chapters.opt(0) !is JSONObject) {
-			return emptyList()
-		}
-		return parseChapters(chapters, titleId, slug)
 	}
 
 	private fun parseChapters(chapters: JSONArray, titleId: String, slug: String): List<MangaChapter> {
@@ -411,8 +423,28 @@ internal class TomiloLib(context: MangaLoaderContext) :
 		}
 	}
 
+	// The host stalls intermittently; retry network failures with backoff
+	private suspend fun <T> retryIO(times: Int = 3, block: suspend () -> T): T {
+		var error: IOException? = null
+		repeat(times) { attempt ->
+			try {
+				return block()
+			} catch (e: CancellationException) {
+				throw e
+			} catch (e: IOException) {
+				error = e
+				if (attempt + 1 < times) {
+					delay(1000L * (attempt + 1))
+				}
+			}
+		}
+		throw error!!
+	}
+
 	private companion object {
 		private const val PAGE_SIZE = 24
+		private const val CHAPTERS_PAGE_SIZE = 500
+		private const val MAX_CHAPTER_PAGES = 20
 		private const val CDN_URL = "https://s3.regru.cloud/tomilolib"
 		private const val IMAGE_ACCEPT = "image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5"
 		private val DATE_PATTERNS = listOf(

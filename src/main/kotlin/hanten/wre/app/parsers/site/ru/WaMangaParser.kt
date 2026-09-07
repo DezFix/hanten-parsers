@@ -62,7 +62,7 @@ internal class WaMangaParser(
 			tags = parseTags(jo),
 			state = parseState(jo.getStringOrNull("statusTitle")),
 			authors = jo.optJSONArray("authors")?.asTypedList<String>()?.toSet().orEmpty(),
-			rating = RATING_UNKNOWN,
+			rating = parseRating(jo),
 			contentRating = if (jo.getBooleanOrDefault("isAdult", false)) {
 				ContentRating.ADULT
 			} else {
@@ -141,6 +141,27 @@ internal class WaMangaParser(
 				)
 			}
 		}.orEmpty()
+	}
+
+	private fun parseRating(jo: JSONObject): Float {
+		// The API has no documented rating field; TomiloLib (similar RU API)
+		// uses averageRating out of 10, so that scale is assumed here.
+		// Anything unrecognized falls back to unknown.
+		jo.optDouble("averageRating", Double.NaN).takeIf { it.isFinite() && it > 0 }?.let {
+			return (it / 10.0).toFloat().coerceIn(0f, 1f)
+		}
+		jo.optDouble("rating", Double.NaN).takeIf { it.isFinite() && it > 0 }?.let {
+			return (it / 10.0).toFloat().coerceIn(0f, 1f)
+		}
+		jo.optDouble("score", Double.NaN).takeIf { it.isFinite() && it > 0 }?.let {
+			return (it / 10.0).toFloat().coerceIn(0f, 1f)
+		}
+		jo.optJSONObject("rating")?.let { nested ->
+			listOf("average", "score", "value").firstNotNullOfOrNull { key ->
+				nested.optDouble(key, Double.NaN).takeIf { it.isFinite() && it > 0 }
+			}?.let { return (it / 10.0).toFloat().coerceIn(0f, 1f) }
+		}
+		return RATING_UNKNOWN
 	}
 
 	private fun parseState(status: String?) = when (status?.lowercase(sourceLocale)) {

@@ -239,7 +239,23 @@ internal class ComXParser(context: MangaLoaderContext) :
 			description = doc.selectFirst("div.page__text.full-text.clearfix")?.textOrNull(),
 			coverUrl = doc.selectFirst(".page__poster img")?.attrAsAbsoluteUrlOrNull("src") ?: manga.coverUrl,
 			tags = tags.ifEmpty { manga.tags },
+			rating = parseRating(doc) ?: manga.rating,
 		)
+	}
+
+	// Classic DLE unit-rating: li.current-rating carries width % (rating/5*100)
+	// and the 0-5 value as text; "0 голосов" means no votes yet
+	private fun parseRating(doc: Document): Float? {
+		val votes = doc.selectFirst("div.page__rating-votes")?.text()?.let { text ->
+			Regex("(\\d+)").find(text)?.groupValues?.get(1)?.toIntOrNull()
+		} ?: 0
+		if (votes <= 0) {
+			return null
+		}
+		val li = doc.selectFirst("li.current-rating") ?: return null
+		li.text().trim().toFloatOrNull()?.div(5f)?.let { return it.coerceIn(0f, 1f) }
+		return Regex("(\\d+(?:\\.\\d+)?)%").find(li.attr("style"))
+			?.groupValues?.get(1)?.toFloatOrNull()?.div(100f)?.coerceIn(0f, 1f)
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {

@@ -187,7 +187,12 @@ internal abstract class GroupleParser(
                 it.textOrNull()
             } ?: manga.altTitles,
             publicUrl = response.request.url.toString(),
-            description = root.selectFirst("div.manga-description")?.html(),
+            description = root.selectFirst("div.manga-description")?.html()
+                // New engine markup (readmanga.me and sister mirrors): the description
+                // moved to .cr-description__content, with meta[itemprop=description] fallback
+                ?: root.selectFirst(".cr-description__content")?.html()
+                ?: doc.selectFirst("meta[itemprop=description]")?.attr("content")?.takeUnless { it.isEmpty() },
+            rating = parseDetailsRating(root) ?: manga.rating,
             largeCoverUrl = coverImg?.attrAsAbsoluteUrlOrNull("data-full"),
             coverUrl = manga.coverUrl
                 ?: coverImg?.attrAsAbsoluteUrlOrNull("data-thumb")?.replace("_p.", "."),
@@ -195,7 +200,7 @@ internal abstract class GroupleParser(
             state = if (isRestricted) {
                 MangaState.RESTRICTED
             } else {
-                manga.state
+                parseProductionState(root) ?: manga.state
             },
             authors = root.select(".elem_author,.elem_illustrator,.elem_screenwriter")
                 .select("a.person-link")
@@ -545,7 +550,7 @@ internal abstract class GroupleParser(
             altTitles = setOfNotNull(descDiv.selectFirst("h5")?.textOrNull()),
             coverUrl = imgDiv.selectFirst("img.lazy")?.attrAsAbsoluteUrlOrNull("data-original")?.replace("_p.", "."),
             rating = runCatching {
-                node.selectFirst(".compact-rate")?.attr("title")?.toFloatOrNull()?.div(5f)
+                node.selectFirst(".compact-rate")?.attr("title")?.toFloatOrNull()?.let(::normalizeRating)
             }.getOrNull() ?: RATING_UNKNOWN,
             authors = setOfNotNull(author),
             contentRating = if (isNsfwSource) ContentRating.ADULT else null,
@@ -565,6 +570,37 @@ internal abstract class GroupleParser(
             },
             source = source,
         )
+    }
+
+    private fun parseDetailsRating(root: Element): Float? {
+        // New engine markup: main score out of 10
+        root.selectFirst(".cr-hero-rating__item--main .cr-hero-rating__value")
+            ?.text()?.trim()?.toFloatOrNull()?.let { return normalizeRating(it) }
+        // Legacy compact badge, if present on details pages
+        root.selectFirst(".compact-rate")?.attr("title")?.toFloatOrNull()?.let { return normalizeRating(it) }
+        return null
+    }
+
+    private fun parseProductionState(root: Element): MangaState? {
+        val status = root.selectFirst("[data-production-status]")?.attr("data-production-status")
+            ?: return null
+        return when (status.uppercase(Locale.US)) {
+            "FINISHED", "COMPLETED" -> MangaState.FINISHED
+            "ONGOING" -> MangaState.ONGOING
+            "PAUSED", "FROZEN", "HIATUS" -> MangaState.PAUSED
+            "ABANDONED", "CANCELLED" -> MangaState.ABANDONED
+            "ANNOUNCE", "UPCOMING" -> MangaState.UPCOMING
+            else -> null
+        }
+    }
+
+    // Rating badges moved from a 5-point to a 10-point scale with the engine update
+    private fun normalizeRating(value: Float): Float {
+        return if (value > 5f) {
+            (value / 10f).coerceIn(0f, 1f)
+        } else {
+            (value / 5f).coerceIn(0f, 1f)
+        }
     }
 
     private fun parsePagesV1(data: String, pos: Int): List<MangaPage>? {

@@ -149,6 +149,7 @@ internal class SenkuroParser(context: MangaLoaderContext) :
 		val chapters = fetchChapters(mangaId, mangaSlug)
 		return manga.copy(
 			title = parsed.title.ifBlank { manga.title },
+			rating = parsed.rating.takeIf { it != RATING_UNKNOWN } ?: manga.rating,
 			altTitles = if (parsed.altTitles.isNotEmpty()) parsed.altTitles else manga.altTitles,
 			coverUrl = parsed.coverUrl ?: manga.coverUrl,
 			largeCoverUrl = parsed.largeCoverUrl ?: manga.largeCoverUrl,
@@ -354,7 +355,8 @@ internal class SenkuroParser(context: MangaLoaderContext) :
 			publicUrl = publicUrl,
 			title = title,
 			altTitles = altTitles,
-			rating = RATING_UNKNOWN,
+			rating = info.optDouble("score", 0.0).takeIf { it > 0.0 }?.div(10.0)?.toFloat()
+				?: RATING_UNKNOWN,
 			contentRating = parseContentRating(info.getStringOrNull("rating")),
 			coverUrl = cover,
 			largeCoverUrl = cover,
@@ -600,6 +602,7 @@ internal class SenkuroParser(context: MangaLoaderContext) :
 					type
 					rating
 					status
+					score
 					formats
 					labels {
 						id
