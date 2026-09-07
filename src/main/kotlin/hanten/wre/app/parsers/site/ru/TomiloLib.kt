@@ -198,12 +198,9 @@ internal class TomiloLib(context: MangaLoaderContext) :
 		val result = ArrayList<MangaChapter>()
 		var page = 1
 		while (page <= MAX_CHAPTER_PAGES) {
-			val batch = parseChapters(fetchChapterJson(titleId, page), titleId, slug)
-			if (batch.isEmpty()) {
-				break
-			}
+			val (batch, hasMore) = fetchChapterPage(titleId, page, slug)
 			result += batch
-			if (batch.size < CHAPTERS_PAGE_SIZE) {
+			if (batch.isEmpty() || !hasMore) {
 				break
 			}
 			page++
@@ -211,8 +208,8 @@ internal class TomiloLib(context: MangaLoaderContext) :
 		return result
 	}
 
-	private suspend fun fetchChapterJson(titleId: String, page: Int): JSONArray {
-		return retryIO {
+	private suspend fun fetchChapterPage(titleId: String, page: Int, slug: String): Pair<List<MangaChapter>, Boolean> {
+		val data = retryIO {
 			webClient.httpGet(
 				apiUrl("chapters/title/$titleId").newBuilder()
 					.addQueryParameter("page", page.toString())
@@ -222,9 +219,14 @@ internal class TomiloLib(context: MangaLoaderContext) :
 				getRequestHeaders(),
 			).parseJson()
 				.optJSONObject("data")
-				?.optJSONArray("chapters")
-				?: JSONArray()
-		}
+		} ?: return emptyList<MangaChapter>() to false
+		val chapters = data.optJSONArray("chapters") ?: JSONArray()
+		val batch = parseChapters(chapters, titleId, slug)
+		// The server may cap the page size below the requested limit,
+		// so the pagination flag (not the batch size) drives the loop
+		val hasMore = data.optJSONObject("pagination")?.optBoolean("hasMore")
+			?: (batch.size >= CHAPTERS_PAGE_SIZE)
+		return batch to hasMore
 	}
 
 	private suspend fun parseManga(info: JSONObject?, withDetails: Boolean): Manga? {
