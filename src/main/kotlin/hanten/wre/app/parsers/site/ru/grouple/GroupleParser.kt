@@ -21,6 +21,7 @@ import hanten.wre.app.parsers.MangaParserAuthProvider
 import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.core.AbstractMangaParser
 import hanten.wre.app.parsers.exception.AuthRequiredException
+import hanten.wre.app.parsers.exception.ContentUnavailableException
 import hanten.wre.app.parsers.exception.ParseException
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
@@ -39,6 +40,8 @@ private const val HEADER_ACCEPT = "Accept"
 private const val RELATED_TITLE = "Связанные произведения"
 private const val COPYRIGHT_ALERT = "Запрещена публикация произведения"
 private const val NO_CHAPTERS = "В этой манге еще нет ни одной главы"
+private const val PREMIUM_ALERT = "премиум"
+private const val PREMIUM_ALERT_EN = "premium"
 
 internal abstract class GroupleParser(
     context: MangaLoaderContext,
@@ -180,37 +183,9 @@ internal abstract class GroupleParser(
                 source = source,
             )
         }
-        return manga.copy(
-            source = newSource,
-            title = doc.metaValue("name") ?: manga.title,
-            altTitles = root.selectFirst(".all-names-popover")?.select(".name")?.mapNotNullToSet {
-                it.textOrNull()
-            } ?: manga.altTitles,
-            publicUrl = response.request.url.toString(),
-            description = root.selectFirst("div.manga-description")?.html()
-                // New engine markup (readmanga.me and sister mirrors): the description
-                // moved to .cr-description__content, with meta[itemprop=description] fallback
-                ?: root.selectFirst(".cr-description__content")?.html()
-                ?: doc.selectFirst("meta[itemprop=description]")?.attr("content")?.takeUnless { it.isEmpty() },
-            rating = parseDetailsRating(root) ?: manga.rating,
-            largeCoverUrl = coverImg?.attrAsAbsoluteUrlOrNull("data-full"),
-            coverUrl = manga.coverUrl
-                ?: coverImg?.attrAsAbsoluteUrlOrNull("data-thumb")?.replace("_p.", "."),
-            tags = tags,
-            state = if (isRestricted) {
-                MangaState.RESTRICTED
-            } else {
-                parseProductionState(root) ?: manga.state
-            },
-            authors = root.select(".elem_author,.elem_illustrator,.elem_screenwriter")
-                .select("a.person-link")
-                .mapNotNullToSet { it.textOrNull() } + manga.authors,
-            contentRating = (if (hasNsfwAlert) ContentRating.SUGGESTIVE else ContentRating.SAFE)
-                .coerceAtLeast(manga.contentRating ?: ContentRating.SAFE),
-            chapters = (
-                chaptersList?.select("tr.item-row")?.takeIf { it.isNotEmpty() }
-                    ?: chaptersList?.select("a.chapter-link")
-            )?.flatMapChapters(reversed = true) { rowOrLink ->
+        val chapterRows = chaptersList?.select("tr.item-row")?.takeIf { it.isNotEmpty() }
+            ?: chaptersList?.select("a.chapter-link")
+        val parsedChapters = chapterRows?.flatMapChapters(reversed = true) { rowOrLink ->
                 val (tr, a) = if (rowOrLink.tagName() == "tr") {
                     val trNode = rowOrLink
                     val aNode = trNode.selectFirst("a.chapter-link") ?: return@flatMapChapters emptyList()
@@ -219,6 +194,11 @@ internal abstract class GroupleParser(
                     val aNode = rowOrLink
                     val trNode = aNode.selectFirstParent("tr") ?: return@flatMapChapters emptyList()
                     trNode to aNode
+                }
+
+                // Skip premium/locked chapters — no readable pages without subscription
+                if (isPremiumChapter(tr, a)) {
+                    return@flatMapChapters emptyList()
                 }
 
                 val href = a.attrAsRelativeUrl("href")
@@ -265,7 +245,39 @@ internal abstract class GroupleParser(
                         )
                     }
                 }
-            }.orEmpty(),
+            }.orEmpty()
+        // Manga is listed but all chapters are premium-only — hide it from the app
+        if (!chapterRows.isNullOrEmpty() && parsedChapters.isEmpty()) {
+            isRestricted = true
+        }
+        return manga.copy(
+            source = newSource,
+            title = doc.metaValue("name") ?: manga.title,
+            altTitles = root.selectFirst(".all-names-popover")?.select(".name")?.mapNotNullToSet {
+                it.textOrNull()
+            } ?: manga.altTitles,
+            publicUrl = response.request.url.toString(),
+            description = root.selectFirst("div.manga-description")?.html()
+                // New engine markup (readmanga.me and sister mirrors): the description
+                // moved to .cr-description__content, with meta[itemprop=description] fallback
+                ?: root.selectFirst(".cr-description__content")?.html()
+                ?: doc.selectFirst("meta[itemprop=description]")?.attr("content")?.takeUnless { it.isEmpty() },
+            rating = parseDetailsRating(root) ?: manga.rating,
+            largeCoverUrl = coverImg?.attrAsAbsoluteUrlOrNull("data-full"),
+            coverUrl = manga.coverUrl
+                ?: coverImg?.attrAsAbsoluteUrlOrNull("data-thumb")?.replace("_p.", "."),
+            tags = tags,
+            state = if (isRestricted) {
+                MangaState.RESTRICTED
+            } else {
+                parseProductionState(root) ?: manga.state
+            },
+            authors = root.select(".elem_author,.elem_illustrator,.elem_screenwriter")
+                .select("a.person-link")
+                .mapNotNullToSet { it.textOrNull() } + manga.authors,
+            contentRating = (if (hasNsfwAlert) ContentRating.SUGGESTIVE else ContentRating.SAFE)
+                .coerceAtLeast(manga.contentRating ?: ContentRating.SAFE),
+            chapters = parsedChapters,
         )
     }
 
@@ -347,7 +359,58 @@ internal abstract class GroupleParser(
                 parsePagesV3(data, pos).let { return it }
             }
         }
+        if (isPremiumPage(doc.body())) {
+            throw ContentUnavailableException("Глава доступна только по премиум-подписке")
+        }
         doc.parseFailed("Pages list not found at ${chapter.url}")
+    }
+
+    private fun isPremiumChapter(tr: Element, a: Element): Boolean {
+        val rowClass = tr.classNames().joinToString(" ").lowercase()
+        if ("premium" in rowClass || "locked" in rowClass || "closed" in rowClass || "pay" in rowClass) {
+            return true
+        }
+        if (tr.selectFirst(
+                "i.fa-lock, i.fa-crown, i.fa-star, .fa-lock, .fa-crown, " +
+                    ".chapter-lock, .premium-badge, span.premium, span.label-premium, " +
+                    ".cr-chapter__premium, .chapter-premium",
+            ) != null
+        ) {
+            return true
+        }
+        val linkClass = a.classNames().joinToString(" ").lowercase()
+        if ("premium" in linkClass || "locked" in linkClass) {
+            return true
+        }
+        // Fallback: row text marks like "Premium" / "Премиум"
+        val rowText = tr.text().lowercase()
+        if (PREMIUM_ALERT in rowText || PREMIUM_ALERT_EN in rowText) {
+            return true
+        }
+        return false
+    }
+
+    private fun isPremiumPage(body: Element): Boolean {
+        if (body.selectFirst(
+                ".premium-paywall, .paywall, .premium-block, .subscribe-block, " +
+                    ".cr-reader__premium, .reader-premium",
+            ) != null
+        ) {
+            return true
+        }
+        val text = body.text()
+        // Premium chapters render paywall text instead of readerInit scripts
+        val markers = listOf(
+            "оформите премиум",
+            "только для премиум",
+            "доступно по премиум",
+            "премиум-подписк",
+            "требуется премиум",
+            "premium only",
+            "requires premium",
+            "premium subscription",
+        )
+        return markers.any { text.contains(it, ignoreCase = true) }
     }
 
     override suspend fun getPageUrl(page: MangaPage): String {
@@ -533,6 +596,14 @@ internal abstract class GroupleParser(
         val descDiv = node.selectFirst("div.desc") ?: return null
         if (descDiv.selectFirst("i.fa-user") != null || descDiv.selectFirst("i.fa-external-link") != null) {
             return null // skip author
+        }
+        // Hide premium-only titles — no readable chapters without subscription
+        if (node.selectFirst(
+                "i.fa-crown, i.fa-lock, .fa-crown, .fa-lock, " +
+                    ".premium-badge, span.premium, span.label-premium, .tile-premium",
+            ) != null
+        ) {
+            return null
         }
         val href = imgDiv.selectFirst("a")?.attrAsAbsoluteUrlOrNull("href") ?: return null
         val title = descDiv.selectFirst("h3")?.selectFirst("a")?.text() ?: return null
