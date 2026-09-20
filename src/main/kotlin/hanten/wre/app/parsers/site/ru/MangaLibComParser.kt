@@ -1,9 +1,14 @@
 package hanten.wre.app.parsers.site.ru
 
 import okhttp3.Headers
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
@@ -55,13 +60,26 @@ internal class MangaLibComParser(
 		val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
 		val results = doc.select("article.short-tablet").mapNotNull(::parseSearchResult)
 		if (results.isNotEmpty()) {
-			return results
+			return filterDeadCovers(results)
 		}
 		if (query != null && doc.getElementsContainingOwnText("найдено 0").isNotEmpty()) {
 			return emptyList()
 		}
 		doc.parseFailed("No manga items found")
 	}
+
+	private suspend fun filterDeadCovers(list: List<Manga>): List<Manga> = coroutineScope {
+		list.map { manga ->
+			async(Dispatchers.IO) {
+				val cover = manga.coverUrl
+				if (cover.isNullOrEmpty() || isCoverAlive(cover)) manga else null
+			}
+		}.awaitAll().filterNotNull()
+	}
+
+	private suspend fun isCoverAlive(url: String): Boolean = runCatching {
+		webClient.httpHead(url.toHttpUrl()).use { it.code == 200 }
+	}.getOrDefault(false)
 
 	private fun parseSearchResult(article: Element): Manga? {
 		val link = article.select("div.st-title a[href]").lastOrNull { it.attr("href").endsWith(".html") }
