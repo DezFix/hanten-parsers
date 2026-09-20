@@ -35,8 +35,11 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 
 		val descriptionRegex = Regex("description:\"((?:[^\"\\\\]|\\\\.)*)\"")
 
-		val chapterRegex =
-			Regex("id:\"([0-9a-f-]{36})\",name:\"((?:[^\"\\\\]|\\\\.)*)\",title:\"((?:[^\"\\\\]|\\\\.)*)\",number:([0-9.]+),volume:(\\d+)")
+		val chapterObjectRegex = Regex("\\{id:\"([0-9a-f-]{36})\"")
+		val nameRegex = Regex("name:\"((?:[^\"\\\\]|\\\\.)*)\"")
+		val titleRegex = Regex("title:\"((?:[^\"\\\\]|\\\\.)*)\"")
+		val numberRegex = Regex("number:([0-9.]+)")
+		val volumeRegex = Regex("volume:(\\d+)")
 		val branchRegex = Regex("branchId:\"([0-9a-f-]*)\"")
 		val publisherRegex = Regex("publisherNames:\"((?:[^\"\\\\]|\\\\.)*)\"")
 		val createdRegex = Regex("createdAt:\"([^\"]+)\"")
@@ -272,21 +275,27 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 		val authors = authorRegex.findAll(chaptersDoc).mapNotNullTo(HashSet()) { match ->
 			match.groupValues[1].unescapeJson().takeUnless { it.isBlank() }
 		}
-		val chapters = chapterRegex.findAll(chaptersDoc).mapNotNull { match ->
+		val chapters = chapterObjectRegex.findAll(chaptersDoc).mapNotNull { match ->
 			val id = match.groupValues[1]
-			val tail = chaptersDoc.substring(match.range.first, minOf(match.range.first + 900, chaptersDoc.length))
-			val branchId = branchRegex.find(tail)?.groupValues?.get(1)
-			val scanlator = publisherRegex.find(tail)?.groupValues?.get(1)
+			// Fields order varies between objects: parse each field independently
+			// inside the object window (first match wins).
+			val body = chaptersDoc.substring(match.range.first, minOf(match.range.first + 1500, chaptersDoc.length))
+			val number = numberRegex.find(body)?.groupValues?.get(1)?.toFloatOrNull()
+				?: return@mapNotNull null
+			val branchId = branchRegex.find(body)?.groupValues?.get(1)
+				?: return@mapNotNull null
+			val name = nameRegex.find(body)?.groupValues?.get(1)?.unescapeJson()
+			val title = titleRegex.find(body)?.groupValues?.get(1)?.unescapeJson()
+			val scanlator = publisherRegex.find(body)?.groupValues?.get(1)
 				?.unescapeJson()?.takeUnless { it.isBlank() }
-			val createdAt = createdRegex.find(tail)?.groupValues?.get(1)
-			val date = dateRegex.find(tail)?.groupValues?.get(1)
+			val createdAt = createdRegex.find(body)?.groupValues?.get(1)
+			val date = dateRegex.find(body)?.groupValues?.get(1)
 			MangaChapter(
 				id = generateUid(id),
 				url = "/content/$slug/$id",
-				title = match.groupValues[2].unescapeJson().takeUnless { it.isBlank() }
-					?: match.groupValues[3].unescapeJson(),
-				number = match.groupValues[4].toFloatOrNull() ?: 0f,
-				volume = match.groupValues[5].toIntOrNull() ?: 0,
+				title = name.takeUnless { it.isNullOrBlank() } ?: title,
+				number = number,
+				volume = volumeRegex.find(body)?.groupValues?.get(1)?.toIntOrNull() ?: 0,
 				uploadDate = dateFormat.parseSafe(createdAt)
 					.takeIf { it != 0L } ?: dateFormatShort.parseSafe(date),
 				scanlator = scanlator,

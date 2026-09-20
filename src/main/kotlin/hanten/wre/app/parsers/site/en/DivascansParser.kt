@@ -495,7 +495,7 @@ internal class DivascansParser(context: MangaLoaderContext) :
 		text = fixMojibake(text)
 		text = text
 			.replace(Regex("<[^>]+>"), " ")
-			.replace(Regex("[\\t\\x0B\\f\\r]+"), " ")
+			.replace(Regex("[\\t\\u000B\\f\\r]+"), " ")
 			.replace(Regex(" *\\n *"), "\n")
 			.replace(Regex("\\n{3,}"), "\n\n")
 			.replace(Regex(" {2,}"), " ")

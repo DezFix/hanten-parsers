@@ -47,10 +47,14 @@ internal class DgMangaParser(
 				append(it.urlEncoded())
 			}
 		}
-		return webClient.httpGet(url).parseJson().getJSONArray("titles").mapJSON(::parseManga)
+		return webClient.httpGet(url).parseJson().getJSONArray("titles").mapJSONNotNull(::parseManga)
 	}
 
-	private fun parseManga(jo: JSONObject): Manga {
+	private fun parseManga(jo: JSONObject): Manga? {
+		// Text novels share the same catalog but have no manga pages
+		if (jo.getStringOrNull("type") == "novel") {
+			return null
+		}
 		val id = jo.getString("_id")
 		return Manga(
 			id = generateUid(id),

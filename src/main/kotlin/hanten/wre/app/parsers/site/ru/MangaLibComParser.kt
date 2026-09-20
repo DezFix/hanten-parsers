@@ -91,9 +91,15 @@ internal class MangaLibComParser(
 		if (!result.chapters.isNullOrEmpty()) {
 			return result
 		}
+		// The chapter list is occasionally rendered empty (server-side flake):
+		// refetch once before falling back to WebView.
+		val retry = parseDetails(manga, webClient.httpGet(url, getRequestHeaders()).parseHtml())
+		if (!retry.chapters.isNullOrEmpty()) {
+			return retry
+		}
 		// Chapters are JS-rendered: fall back to WebView (a real browser in production,
 		// unavailable in JVM tests — plain HTTP stays the fast path).
-		val rendered = fetchRendered(url, "ul.chapters-list a.item-serial") ?: return result
+		val rendered = fetchRendered(url, "ul.chapters-list a.item-serial") ?: return retry
 		return parseDetails(manga, rendered)
 	}
 

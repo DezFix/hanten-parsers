@@ -300,7 +300,12 @@ internal abstract class LibSocialParser(
 		if (preferred != null) {
 			servers[preferred]?.let { return it }
 		}
-		return checkNotNull(servers[SERVER_MAIN] ?: servers[SERVER_DOWNLOAD] ?: servers[SERVER_SECONDARY]) {
+		// NOTE: img*.imglib.info (main/secondary) currently answers 403 to everyone;
+		// prefer alive img*.cdnlibs.org hosts (download/compress) by default.
+		return checkNotNull(
+			servers[SERVER_DOWNLOAD] ?: servers[SERVER_COMPRESS]
+				?: servers[SERVER_MAIN] ?: servers[SERVER_SECONDARY],
+		) {
 			"No available images servers"
 		}
 	}
@@ -436,14 +441,30 @@ internal abstract class LibSocialParser(
 		return result
 	}
 
-	private suspend fun getAuthData(): JSONObject? = runCatching {
-		// WebView-based localStorage read may fail where no DOM exists (e.g. JVM tests):
-		// fall back to anonymous requests instead of breaking the whole call.
-		val raw = WebViewHelper(context).getLocalStorageValue(domain, "auth") ?: return null
-		JSONObject(raw.unescapeJson().removeSurrounding('"'))
-	}.getOrNull()
+	private suspend fun getAuthData(): JSONObject? {
+		// localStorage read spins up a WebView + page load (seconds per call) and runs
+		// inside intercept() on EVERY request: cache it briefly instead.
+		if (System.currentTimeMillis() - cachedAuthDataAt < AUTH_CACHE_TTL_MILLIS) {
+			return cachedAuthData
+		}
+		val fresh = runCatching {
+			val raw = WebViewHelper(context).getLocalStorageValue(domain, "auth") ?: return@runCatching null
+			JSONObject(raw.unescapeJson().removeSurrounding('"'))
+		}.getOrNull()
+		cachedAuthData = fresh
+		cachedAuthDataAt = System.currentTimeMillis()
+		return fresh
+	}
+
+	@Volatile
+	private var cachedAuthData: JSONObject? = null
+
+	@Volatile
+	private var cachedAuthDataAt: Long = 0L
 
 	protected companion object {
+
+		private const val AUTH_CACHE_TTL_MILLIS = 60_000L
 
 		const val SERVER_MAIN = "main"
 		const val SERVER_SECONDARY = "secondary"
