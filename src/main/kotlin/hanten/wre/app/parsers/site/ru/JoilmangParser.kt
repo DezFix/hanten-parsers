@@ -36,7 +36,7 @@ internal class JoilmangParser(
 	private suspend fun fetchDocument(url: String, readySelector: String): Document {
 		// Plain HTTP first: the Vercel checkpoint is selective, not permanent.
 		// WebView (slow, ~seconds) is only a fallback for the checkpoint page.
-		return fetchDocumentOrPlain(url, readySelector) ?: fetchDocumentViaWebView(url)
+		return fetchDocumentOrPlain(url, readySelector) ?: fetchDocumentViaWebView(url, readySelector)
 	}
 
 	private suspend fun fetchDocumentOrPlain(url: String, readySelector: String?): Document? {
@@ -57,16 +57,18 @@ internal class JoilmangParser(
 		return doc.body()?.text()?.contains("Vercel Security Checkpoint") == true
 	}
 
-	private suspend fun fetchDocumentViaWebView(url: String): Document {		val script = """
+	private suspend fun fetchDocumentViaWebView(url: String, readySelector: String): Document {
+		// NOTE: the ready check must require the actual content (e.g. chapter links),
+		// not just a container: the site renders chapter lists asynchronously and an
+		// empty <ol> would otherwise be accepted too early.
+		val script = """
 			(() => {
 				const checkpoint = (document.title || '').toLowerCase().includes('verifying your browser') ||
 					(document.body && document.body.innerText.includes('Vercel Security Checkpoint'));
 				if (checkpoint) {
 					return 'VERCEL_CHECKPOINT';
 				}
-				const ready = document.body && document.querySelector(
-					'a.jm-card-hover, main, header, h1.section-heading, details ol, picture[data-reader-page]'
-				);
+				const ready = document.body && document.querySelector('$readySelector');
 				if (ready) {
 					window.stop();
 					const elementsToRemove = document.querySelectorAll('script, iframe, object, embed, style');
