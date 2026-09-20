@@ -16,8 +16,8 @@ Before you start, please note that the ability to use the following technologies
 - [IntelliJ IDEA](https://www.jetbrains.com/idea/) (Community edition is enough)
 - Android device (or emulator)
 
-Kotatsu parsers are not a part of the Android application, but you can easily develop and test it directly inside an
-Android application project and relocate it to the library project when done.
+Hanten parsers are not a part of the Android application, but you can easily develop and test them right inside this
+library project (see `src/test`) and use the Hanten Android application for manual checks.
 
 ### Before you start
 
@@ -74,9 +74,9 @@ All members of the `MangaParser` class are documented. Pay attention to some pec
 
 ## Development process
 
-During the development, it is recommended (but not necessary) to write it directly
-in the Kotatsu Android application project. You can use the `core.parser.DummyParser` class as a sandbox. The `Dummy`
-manga source is available in the debug Kotatsu build.
+During the development, it is recommended (but not necessary) to write and run
+a test directly in the `hanten-parsers` library project (see `src/test`, e.g.
+`site/revision/RuUaRevisionTest.kt` for a live-network sweep template).
 
 Once the parser is ready you can relocate your code into the `hanten-parsers` library project in a `site` package and
 create a Pull Request.
@@ -87,7 +87,7 @@ It is recommended that unit tests be run before submitting a PR.
 
 - Temporary modify the `MangaSources` annotation class: specify your parser(s) name(s) and change mode
   to `EnumSource.Mode.INCLUDE`
-- Run the `MangaParserTest` (`gradlew :test --tests "hanten.wre.app.parsers.MangaParserTest"`)
+- Run the `MangaParserTest` (`./gradlew test --tests "hanten.wre.app.parsers.MangaParserTest"`)
 - Optionally, you can run the `generateTestsReport` gradle task to get a pretty readable html report from test results.
 
 ## Help
