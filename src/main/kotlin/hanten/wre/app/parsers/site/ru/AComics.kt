@@ -8,12 +8,11 @@ import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.core.PagedMangaParser
+import hanten.wre.app.parsers.exception.ParseException
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
-import hanten.wre.app.parsers.Broken
 import java.util.*
 
-@Broken
 @MangaSourceParser("ACOMICS", "AComics", "ru", ContentType.COMICS)
 internal class AComics(context: MangaLoaderContext) :
     PagedMangaParser(context, MangaParserSource.ACOMICS, pageSize = 10) {
@@ -39,7 +38,7 @@ internal class AComics(context: MangaLoaderContext) :
     }
 
     override suspend fun getFilterOptions() = MangaListFilterOptions(
-        availableTags = getOrCreateTagMap().values.toSet(),
+        availableTags = getOrCreateTagMap().byKey.values.toSet(),
         availableStates = EnumSet.of(MangaState.ONGOING, MangaState.FINISHED),
     )
 
@@ -98,18 +97,23 @@ internal class AComics(context: MangaLoaderContext) :
     }
 
     private fun parseMangaList(docs: Document): List<Manga> {
-        return docs.select("table.list-loadable").map {
-            val a = it.selectFirstOrThrow("a")
-            val url = a.attrAsAbsoluteUrl("href") + "/about"
+        return docs.select("section.serial-card").mapNotNull { card ->
+            val a = card.selectFirst("h2.title a[href]") ?: return@mapNotNull null
+            val href = a.attrAsRelativeUrl("href")
+            val url = href.toAbsoluteUrl(domain) + "/about"
+            val title = a.text().trim().takeUnless { it.isEmpty() } ?: return@mapNotNull null
+            val cover = card.selectFirst("a.cover img")?.let { img ->
+                img.attr("data-real-src").takeUnless { it.isEmpty() } ?: img.src()
+            }.orEmpty().takeUnless { it.isEmpty() }?.toAbsoluteUrl(domain).orEmpty()
             Manga(
                 id = generateUid(url),
                 url = url,
-                title = it.selectFirstOrThrow(".title").text(),
+                title = title,
                 altTitles = emptySet(),
                 publicUrl = url,
                 rating = RATING_UNKNOWN,
                 contentRating = if (isNsfwSource) ContentRating.ADULT else null,
-                coverUrl = it.selectFirstOrThrow("img").src().orEmpty(),
+                coverUrl = cover,
                 tags = emptySet(),
                 state = null,
                 authors = emptySet(),
@@ -118,36 +122,47 @@ internal class AComics(context: MangaLoaderContext) :
         }
     }
 
-    private var tagCache: ArrayMap<String, MangaTag>? = null
+    private class TagMaps(
+        val byKey: Map<String, MangaTag>,
+        val bySlug: Map<String, MangaTag>,
+    )
+
+    private var tagCache: TagMaps? = null
     private val mutex = Mutex()
 
-    private suspend fun getOrCreateTagMap(): Map<String, MangaTag> = mutex.withLock {
+    private suspend fun getOrCreateTagMap(): TagMaps = mutex.withLock {
         tagCache?.let { return@withLock it }
-        val tagMap = ArrayMap<String, MangaTag>()
-        val tagElements =
-            webClient.httpGet("https://$domain/comics").parseHtml().requireElementById("catalog").select(" a.button")
-        for (el in tagElements) {
-            val name = el.html().substringAfterLast("</span>")
-            if (name.isEmpty()) continue
-            tagMap[name] = MangaTag(
-                title = name,
-                key = el.attr("onclick").substringAfterLast("('").substringBefore("')"),
-                source = source,
-            )
+        val doc = webClient.httpGet("https://$domain/comics").parseHtml()
+        val byKey = ArrayMap<String, MangaTag>()
+        val bySlug = ArrayMap<String, MangaTag>()
+        doc.select("form.catalog-filters-form fieldset.categories label").forEach { label ->
+            val key = label.selectFirst("input[value]")?.attr("value")?.takeUnless { it.isEmpty() }
+                ?: return@forEach
+            val title = label.text().trim().takeUnless { it.isEmpty() } ?: return@forEach
+            val slug = label.classNames().firstOrNull { it.startsWith("category-") }
+                ?.removePrefix("category-")?.takeUnless { it.isEmpty() }
+            val tag = MangaTag(title = title, key = key, source = source)
+            byKey[key] = tag
+            if (slug != null) {
+                bySlug[slug] = tag
+            }
         }
-        tagCache = tagMap
-        return@withLock tagMap
+        return@withLock TagMaps(byKey, bySlug).also { tagCache = it }
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
         val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
         val tagMap = getOrCreateTagMap()
-        val tags = doc.select("p.serial-about-badges .category").mapNotNullToSet { tagMap[it.text()] }
-        val author = doc.selectFirst("p:contains(Автор оригинала:)")?.text()?.replace("Автор оригинала: ", "")
+        val tags = doc.select("p.serial-about-badges a.badge.category").mapNotNullToSet { a ->
+            val slug = a.attr("href").removeSuffix("/").substringAfterLast("/")
+                .takeUnless { it.isEmpty() } ?: return@mapNotNullToSet null
+            tagMap.bySlug[slug]
+        }
+        val authors = doc.select("p.serial-about-authors a").eachText().toSet()
         return manga.copy(
             tags = tags,
-            description = doc.selectFirst("section.serial-about-text p")?.text(),
-            authors = setOfNotNull(author),
+            description = doc.selectFirst("section.serial-about-text")?.text()?.trim(),
+            authors = authors,
             chapters = listOf(
                 MangaChapter(
                     id = manga.id,
@@ -166,7 +181,11 @@ internal class AComics(context: MangaLoaderContext) :
 
     override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
         val doc = webClient.httpGet(chapter.url + "1").parseHtml()
-        val totalPages = doc.selectFirstOrThrow("span.issueNumber").text().substringAfterLast('/').toInt()
+        val totalPages = doc.selectFirst("h1.reader-issue-title span.number")?.text()
+            ?.substringAfterLast('/', "")?.trim()?.toIntOrNull()
+            ?: doc.selectFirst("nav.reader-navigator[data-issue-count]")
+                ?.attr("data-issue-count")?.toIntOrNull()
+            ?: throw ParseException("Cannot determine pages count", chapter.url)
         return (1..totalPages).map {
             val url = chapter.url + it
             MangaPage(
@@ -180,6 +199,7 @@ internal class AComics(context: MangaLoaderContext) :
 
     override suspend fun getPageUrl(page: MangaPage): String {
         val doc = webClient.httpGet(page.url.toAbsoluteUrl(domain)).parseHtml()
-        return doc.requireElementById("mainImage").requireSrc()
+        return doc.selectFirstOrThrow("section.reader-issue img.issue").src()
+            ?: throw ParseException("Image not found", page.url)
     }
 }

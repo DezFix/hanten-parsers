@@ -16,11 +16,11 @@ import hanten.wre.app.parsers.network.UserAgents
 import hanten.wre.app.parsers.util.*
 import hanten.wre.app.parsers.util.json.getStringOrNull
 import hanten.wre.app.parsers.util.json.mapJSON
+import hanten.wre.app.parsers.util.json.unescapeJson
 import hanten.wre.app.parsers.Broken
 import java.text.SimpleDateFormat
 import java.util.*
 
-@Broken
 @MangaSourceParser("ZENMANGA", "ZenManga", "ru")
 internal class ZenMangaParser(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.ZENMANGA, 30),
@@ -29,11 +29,27 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 	private val astroJsonParser = AstroJsonParser()
 	private val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
 
+	private val dateFormatShort = SimpleDateFormat("dd.MM.yyyy", Locale.US)
+
+	private companion object {
+
+		val descriptionRegex = Regex("description:\"((?:[^\"\\\\]|\\\\.)*)\"")
+
+		val chapterRegex =
+			Regex("id:\"([0-9a-f-]{36})\",name:\"((?:[^\"\\\\]|\\\\.)*)\",title:\"((?:[^\"\\\\]|\\\\.)*)\",number:([0-9.]+),volume:(\\d+)")
+		val branchRegex = Regex("branchId:\"([0-9a-f-]*)\"")
+		val publisherRegex = Regex("publisherNames:\"((?:[^\"\\\\]|\\\\.)*)\"")
+		val createdRegex = Regex("createdAt:\"([^\"]+)\"")
+		val dateRegex = Regex("date:\"([\\d.]+)\"")
+		val authorRegex =
+			Regex("type:\"(?:AUTHOR|ARTIST)\",publisher:[^}]*?name:\"((?:[^\"\\\\]|\\\\.)*)\"")
+	}
+
 	init {
 		setFirstPage(0)
 	}
 
-	override val configKeyDomain = ConfigKey.Domain("inkstory.me")
+	override val configKeyDomain = ConfigKey.Domain("inkstory.net", "inkstory.me")
 
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
 		SortOrder.POPULARITY,
@@ -236,65 +252,56 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		val data = fetchAstroData(manga.url)
-			?: throw ParseException("Не удалось получить Astro JSON для деталей манги", manga.publicUrl)
-
-		val bookData = data["current-book"] as? Map<*, *> ?: return manga
-		val branchesData = data["current-book-branches"] as? List<Map<*, *>> ?: emptyList()
-		val chaptersData = data["current-book-chapters"] as? List<Map<*, *>> ?: emptyList()
-
-		val description = bookData["description"] as? String
-
-		val tags = (bookData["labels"] as? List<Map<*, *>>)?.mapNotNullTo(HashSet()) {
-			val tagName = it["name"] as? String
-			val tagKey = it["slug"] as? String
-			if (tagName != null && tagKey != null) {
-				MangaTag(key = tagKey, title = tagName.replaceFirstChar { c -> c.uppercase() }, source = source)
-			} else null
-		} ?: emptySet()
-
-		val authors = (bookData["relations"] as? List<Map<*, *>>)?.mapNotNullTo(HashSet()) {
-			val type = it["type"] as? String
-			if (type == "AUTHOR" || type == "ARTIST") {
-				(it["publisher"] as? Map<*, *>)?.get("name") as? String
-			} else null
-		} ?: emptySet()
-
-		val branchIdToNameMap = branchesData.associate { branchMap ->
-			val branchId = branchMap["id"] as? String
-
-			val scanlatorNames = (branchMap["publishers"] as? List<Map<*, *>>)
-				?.mapNotNull { publisherMap -> publisherMap["name"] as? String }
-				?.joinToString(" & ")
-
-			branchId to scanlatorNames
-		}
-
 		val slug = manga.url.substringAfterLast('/')
-
-		val chapters = chaptersData.mapNotNull { chapterMap ->
-			val id = chapterMap["id"] as? String ?: return@mapNotNull null
-			val branchId = chapterMap["branchId"] as? String
-			val scanlator = branchIdToNameMap[branchId]
-
+		val doc = webClient.httpGet("https://$domain/content/$slug", getRequestHeaders()).parseHtml()
+		val rawHtml = doc.html()
+		val description = descriptionRegex.find(rawHtml)?.groupValues?.get(1)
+			?.unescapeJson()?.takeUnless { it.isBlank() }
+			?: doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim()
+		val tags = doc.select("a[href^=/genres/]").mapNotNullTo(HashSet()) { a ->
+			val title = a.text().trim().replaceFirstChar { c -> c.uppercase() }.takeIf { it.isNotEmpty() }
+				?: return@mapNotNullTo null
+			val key = a.attr("href").removeSuffix("/").substringAfterLast("/").takeIf { it.isNotEmpty() }
+				?: return@mapNotNullTo null
+			MangaTag(key = key, title = title, source = source)
+		}
+		val chaptersDoc = webClient.httpGet(
+			"https://$domain/content/$slug/chapters",
+			getRequestHeaders(),
+		).parseHtml().html()
+		val authors = authorRegex.findAll(chaptersDoc).mapNotNullTo(HashSet()) { match ->
+			match.groupValues[1].unescapeJson().takeUnless { it.isBlank() }
+		}
+		val chapters = chapterRegex.findAll(chaptersDoc).mapNotNull { match ->
+			val id = match.groupValues[1]
+			val tail = chaptersDoc.substring(match.range.first, minOf(match.range.first + 900, chaptersDoc.length))
+			val branchId = branchRegex.find(tail)?.groupValues?.get(1)
+			val scanlator = publisherRegex.find(tail)?.groupValues?.get(1)
+				?.unescapeJson()?.takeUnless { it.isBlank() }
+			val createdAt = createdRegex.find(tail)?.groupValues?.get(1)
+			val date = dateRegex.find(tail)?.groupValues?.get(1)
 			MangaChapter(
 				id = generateUid(id),
 				url = "/content/$slug/$id",
-				title = chapterMap["name"] as? String,
-				number = chapterMap["number"].toSafeFloat(),
-				volume = chapterMap["volume"].toSafeInt(),
-				uploadDate = dateFormat.parseSafe(chapterMap["createdAt"] as? String),
+				title = match.groupValues[2].unescapeJson().takeUnless { it.isBlank() }
+					?: match.groupValues[3].unescapeJson(),
+				number = match.groupValues[4].toFloatOrNull() ?: 0f,
+				volume = match.groupValues[5].toIntOrNull() ?: 0,
+				uploadDate = dateFormat.parseSafe(createdAt)
+					.takeIf { it != 0L } ?: dateFormatShort.parseSafe(date),
 				scanlator = scanlator,
-				branch = scanlator,
-				source = source
+				branch = scanlator ?: branchId,
+				source = source,
 			)
-		}.reversed()
-
+		}.toList().reversed()
 		return manga.copy(
+			title = doc.selectFirst("h1")?.text()?.trim()?.takeUnless { it.isEmpty() } ?: manga.title,
 			description = description,
+			coverUrl = doc.selectFirst("meta[property=og:image]")?.attr("content")?.trim()
+				?.takeUnless { it.isEmpty() } ?: manga.coverUrl,
 			tags = manga.tags + tags,
 			authors = authors,
-			chapters = chapters
+			chapters = chapters,
 		)
 	}
 
@@ -319,29 +326,21 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val data = fetchAstroData(chapter.url)
-			?: throw ParseException("Не удалось получить Astro JSON для страниц главы", chapter.url)
-
-		val chapterData = data["reader-current-chapter"] as? Map<*, *>
-			?: throw ParseException("Ключ 'reader-current-chapter' не найден", chapter.url)
-
-		val pagesList = chapterData["pages"] as? List<Map<*, *>>
-			?: throw ParseException("Список страниц 'pages' не найден", chapter.url)
-
-		return pagesList
-			.sortedBy { it["index"].toSafeInt() }
-			.mapNotNull { pageMap ->
-				val id = pageMap["id"] as? String
-				val imageUrl = pageMap["image"] as? String
-				if (id == null || imageUrl == null) return@mapNotNull null
-
-				MangaPage(
-					id = generateUid(id),
-					url = "$imageUrl&width=1600",
-					preview = null,
-					source = source
-				)
-			}
+		val chapterId = chapter.url.substringAfterLast('/')
+		val json = webClient.httpGet(
+			"https://api.$domain/v2/chapters/$chapterId",
+			getRequestHeaders(),
+		).parseJson()
+		return json.getJSONArray("pages").mapJSON { pageMap ->
+			val id = pageMap.getString("id")
+			val imageUrl = pageMap.getString("image")
+			MangaPage(
+				id = generateUid(id),
+				url = "$imageUrl?width=1600",
+				preview = null,
+				source = source,
+			)
+		}
 	}
 
 	private suspend fun fetchAstroData(relativeUrl: String): Map<*, *>? {

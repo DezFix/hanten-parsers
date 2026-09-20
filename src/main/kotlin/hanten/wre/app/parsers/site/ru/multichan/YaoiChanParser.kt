@@ -14,6 +14,7 @@ internal class YaoiChanParser(context: MangaLoaderContext) : ChanParser(context,
 
 	override val configKeyDomain = ConfigKey.Domain(
 		"v18.yaoi-chan.me",
+		"yaoi-chan.me",
 		"v12.yaoi-chan.me",
 		"v9.yaoi-chan.me",
 		"v10.yaoi-chan.me",

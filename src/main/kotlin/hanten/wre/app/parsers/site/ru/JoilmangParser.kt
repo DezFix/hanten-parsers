@@ -33,8 +33,31 @@ internal class JoilmangParser(
 
 	override suspend fun getFilterOptions() = MangaListFilterOptions()
 
-	private suspend fun fetchDocument(url: String): Document {
-		val script = """
+	private suspend fun fetchDocument(url: String, readySelector: String): Document {
+		// Plain HTTP first: the Vercel checkpoint is selective, not permanent.
+		// WebView (slow, ~seconds) is only a fallback for the checkpoint page.
+		return fetchDocumentOrPlain(url, readySelector) ?: fetchDocumentViaWebView(url)
+	}
+
+	private suspend fun fetchDocumentOrPlain(url: String, readySelector: String?): Document? {
+		val doc = runCatching { webClient.httpGet(url).parseHtml() }.getOrNull() ?: return null
+		if (isCheckpoint(doc)) {
+			return null
+		}
+		if (readySelector != null && doc.selectFirst(readySelector) == null) {
+			return null
+		}
+		return doc
+	}
+
+	private fun isCheckpoint(doc: Document): Boolean {
+		if ((doc.title() ?: "").contains("verifying your browser", ignoreCase = true)) {
+			return true
+		}
+		return doc.body()?.text()?.contains("Vercel Security Checkpoint") == true
+	}
+
+	private suspend fun fetchDocumentViaWebView(url: String): Document {		val script = """
 			(() => {
 				const checkpoint = (document.title || '').toLowerCase().includes('verifying your browser') ||
 					(document.body && document.body.innerText.includes('Vercel Security Checkpoint'));
@@ -88,7 +111,7 @@ internal class JoilmangParser(
 				append(params.joinToString("&"))
 			}
 		}
-		val doc = fetchDocument(url)
+		val doc = fetchDocument(url, "a.jm-card-hover")
 		val cards = doc.select("a.jm-card-hover[href]").mapNotNull(::parseCard)
 		if (cards.isEmpty()) {
 			doc.parseFailed("No manga items found")
@@ -123,7 +146,8 @@ internal class JoilmangParser(
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		val doc = fetchDocument(manga.url.toAbsoluteUrl(domain))
+		// Chapters are JS-rendered: plain HTML only qualifies if it already has them.
+		val doc = fetchDocument(manga.url.toAbsoluteUrl(domain), "details ol li a[href]")
 		val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.US)
 		val title = doc.selectFirst("h1.section-heading")?.text()?.trim()?.takeUnless { it.isEmpty() }
 			?: manga.title
@@ -202,7 +226,7 @@ internal class JoilmangParser(
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val doc = fetchDocument(chapter.url.toAbsoluteUrl(domain))
+		val doc = fetchDocument(chapter.url.toAbsoluteUrl(domain), "picture[data-reader-page]")
 		return doc.select("picture[data-reader-page] img[src]").mapNotNull { img ->
 			val url = img.attrAsAbsoluteUrlOrNull("src") ?: return@mapNotNull null
 			MangaPage(

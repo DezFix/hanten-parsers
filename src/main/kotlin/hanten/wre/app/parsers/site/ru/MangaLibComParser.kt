@@ -1,6 +1,8 @@
 package hanten.wre.app.parsers.site.ru
 
 import okhttp3.Headers
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
@@ -83,7 +85,19 @@ internal class MangaLibComParser(
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
+		val url = manga.url.toAbsoluteUrl(domain)
+		val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+		val result = parseDetails(manga, doc)
+		if (!result.chapters.isNullOrEmpty()) {
+			return result
+		}
+		// Chapters are JS-rendered: fall back to WebView (a real browser in production,
+		// unavailable in JVM tests — plain HTTP stays the fast path).
+		val rendered = fetchRendered(url, "ul.chapters-list a.item-serial") ?: return result
+		return parseDetails(manga, rendered)
+	}
+
+	private fun parseDetails(manga: Manga, doc: Document): Manga {
 		val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.US)
 		val info = doc.select("ul.mangainfo li").associate { li ->
 			val label = li.children().firstOrNull { it.tagName() == "span" }
@@ -139,7 +153,18 @@ internal class MangaLibComParser(
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val doc = webClient.httpGet(chapter.url.toAbsoluteUrl(domain), getRequestHeaders()).parseHtml()
+		val url = chapter.url.toAbsoluteUrl(domain)
+		val doc = webClient.httpGet(url, getRequestHeaders()).parseHtml()
+		val pages = parsePages(doc)
+		if (pages.isNotEmpty()) {
+			return pages
+		}
+		val rendered = fetchRendered(url, "a.mangaPage[data-i]")
+			?: throw ParseException("No pages found", chapter.url)
+		return parsePages(rendered).ifEmpty { throw ParseException("No pages found", chapter.url) }
+	}
+
+	private fun parsePages(doc: Document): List<MangaPage> {
 		return doc.select("a.mangaPage[data-i]").mapNotNull { a ->
 			val url = a.attrAsAbsoluteUrlOrNull("data-i") ?: return@mapNotNull null
 			MangaPage(
@@ -148,7 +173,39 @@ internal class MangaLibComParser(
 				preview = null,
 				source = source,
 			)
-		}.ifEmpty { throw ParseException("No pages found", chapter.url) }
+		}
+	}
+
+	private suspend fun fetchRendered(url: String, selector: String): Document? {
+		val script = """
+			(() => {
+				const ready = document.body && document.querySelector('$selector');
+				if (ready) {
+					window.stop();
+					return document.documentElement.outerHTML;
+				}
+				return null;
+			})();
+		""".trimIndent()
+		val rawHtml = runCatching { context.evaluateJs(url, script, 30000L) }.getOrNull()
+			?: return null
+		val html = rawHtml.unquoteJs()
+		return Jsoup.parse(html, url)
+	}
+
+	private fun String.unquoteJs(): String {
+		var s = this
+		if (s.length >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+			s = s.substring(1, s.length - 1)
+				.replace("\\\"", "\"")
+				.replace("\\n", "\n")
+				.replace("\\r", "\r")
+				.replace("\\t", "\t")
+				.replace(Regex("""\\u([0-9A-Fa-f]{4})""")) { match ->
+					match.groupValues[1].toInt(16).toChar().toString()
+				}
+		}
+		return s
 	}
 
 	private fun String.cleanTitle(): String {

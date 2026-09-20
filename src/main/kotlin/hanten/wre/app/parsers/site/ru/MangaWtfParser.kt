@@ -29,7 +29,7 @@ internal class MangaWtfParser(
 		)
 
 	@InternalParsersApi
-	override val configKeyDomain = ConfigKey.Domain("manga.wtf")
+	override val configKeyDomain = ConfigKey.Domain("inkstory.net", "manga.wtf")
 
 	override val filterCapabilities: MangaListFilterCapabilities
 		get() = MangaListFilterCapabilities(
@@ -132,7 +132,7 @@ internal class MangaWtfParser(
 				title = jo.getJSONObject("name").getString("ru"),
 				altTitles = setOfNotNull(jo.getJSONObject("name").getStringOrNull("en")),
 				url = jo.getString("id"),
-				publicUrl = "https://$domain/manga/${jo.getString("slug")}",
+				publicUrl = "https://$domain/content/${jo.getString("slug")}",
 				rating = jo.getFloatOrDefault("averageRating", -10f) / 10f,
 				contentRating = if (isNsfwSource) ContentRating.ADULT else null,
 				coverUrl = jo.getString("poster"),
@@ -260,7 +260,7 @@ internal class MangaWtfParser(
 			title = getJSONObject("name").getString("ru"),
 			altTitles = setOfNotNull(getJSONObject("name").getStringOrNull("en")),
 			url = getString("id"),
-			publicUrl = "https://$domain/manga/${getString("slug")}",
+			publicUrl = "https://$domain/content/${getString("slug")}",
 			rating = getFloatOrDefault("averageRating", -10f) / 10f,
 			contentRating = if (isNsfwSource) ContentRating.ADULT else null,
 			coverUrl = getString("poster"),

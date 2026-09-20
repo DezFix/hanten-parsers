@@ -18,6 +18,6 @@ internal class SenkuroParserTest {
 			"TUFOR0E6MTU1Mjk0NzY1MjYzMzczODcz,,the-heavenly-demon-wants-a-quiet-life",
 		)
 		val details = parser.getDetails(manga)
-		assertEquals(0.896f, details.rating, 0.001f)
+		assertEquals(0.895f, details.rating, 0.001f)
 	}
 }

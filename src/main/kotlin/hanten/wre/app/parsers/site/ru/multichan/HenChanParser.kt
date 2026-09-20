@@ -12,10 +12,13 @@ import java.util.*
 internal class HenChanParser(context: MangaLoaderContext) : ChanParser(context, MangaParserSource.HENCHAN) {
 
 	override val configKeyDomain = ConfigKey.Domain(
-		"hentaichan.live",
+		"manga.h-chan.me",
+		"xxl.hentaichan.live",
+		"x9.h-chan.me",
+		"x3.h-chan.me",
+		"x.hentaichan.live",
 		"x12.h-chan.me",
 		"x5.h-chan.me",
-		"xxl.hentaichan.live",
 		"y.hentaichan.live",
 		"xx.hentaichan.live",
 	)

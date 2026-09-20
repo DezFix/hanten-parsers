@@ -202,9 +202,24 @@ internal abstract class LibSocialParser(
 				val id = it.getIntOrDefault("id", -1)
 				if (id >= 4) ContentRating.SUGGESTIVE else sourceContentRating
 			} ?: manga.contentRating,
-			description = json.getString("summary").nl2br(),
+			description = json.parseSummary()?.nl2br(),
 			chapters = chapters,
 		)
+	}
+
+	private fun JSONObject.parseSummary(): String? {
+		// legacy plain-text summary
+		getStringOrNull("summary")?.let { return it }
+		// TipTap doc: {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"..."}]}]}
+		val doc = optJSONObject("summary") ?: return null
+		return buildString {
+			doc.optJSONArray("content")?.asTypedList<JSONObject>()?.forEach { block ->
+				block.optJSONArray("content")?.asTypedList<JSONObject>()?.forEach { node ->
+					node.getStringOrNull("text")?.let(::append)
+				}
+				append('\n')
+			}
+		}.trim().takeIf { it.isNotEmpty() }
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> = coroutineScope {
@@ -421,10 +436,12 @@ internal abstract class LibSocialParser(
 		return result
 	}
 
-	private suspend fun getAuthData(): JSONObject? {
+	private suspend fun getAuthData(): JSONObject? = runCatching {
+		// WebView-based localStorage read may fail where no DOM exists (e.g. JVM tests):
+		// fall back to anonymous requests instead of breaking the whole call.
 		val raw = WebViewHelper(context).getLocalStorageValue(domain, "auth") ?: return null
-		return JSONObject(raw.unescapeJson().removeSurrounding('"'))
-	}
+		JSONObject(raw.unescapeJson().removeSurrounding('"'))
+	}.getOrNull()
 
 	protected companion object {
 
