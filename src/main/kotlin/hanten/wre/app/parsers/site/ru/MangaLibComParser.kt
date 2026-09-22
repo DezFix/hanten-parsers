@@ -81,8 +81,20 @@ internal class MangaLibComParser(
 		webClient.httpHead(url.toHttpUrl()).use { it.code == 200 }
 	}.getOrDefault(false)
 
-	private fun parseSearchResult(article: Element): Manga? {
-		val link = article.select("div.st-title a[href]").lastOrNull { it.attr("href").endsWith(".html") }
+	// DLE unit rating: span.ratingtypeplusminus holds the 0-10 score,
+	// span[id^=vote-num-id-] holds the votes count. Zero votes = no rating.
+	private fun parseRating(scope: Element): Float {
+		val value = scope.selectFirst("span.ratingtypeplusminus")
+			?.text()?.replace(',', '.')?.toFloatOrNull() ?: return RATING_UNKNOWN
+		val votes = scope.selectFirst("span[id^=vote-num-id-]")
+			?.text()?.filter { it.isDigit() }?.toIntOrNull() ?: 0
+		if (value <= 0f || votes <= 0) {
+			return RATING_UNKNOWN
+		}
+		return (value / 10f).coerceIn(0f, 1f)
+	}
+
+	private fun parseSearchResult(article: Element): Manga? {		val link = article.select("div.st-title a[href]").lastOrNull { it.attr("href").endsWith(".html") }
 			?: return null
 		val title = link.text().trim().cleanTitle().takeUnless { it.isEmpty() } ?: return null
 		return Manga(
@@ -94,7 +106,7 @@ internal class MangaLibComParser(
 			authors = article.select("ul.sh-list a[href*=xfsearch/author/]").eachText().toSet(),
 			description = article.selectFirst(".st-desc")?.text()?.trim(),
 			tags = emptySet(),
-			rating = RATING_UNKNOWN,
+			rating = parseRating(article),
 			state = null,
 			coverUrl = article.selectFirst("a.st-poster img")?.attrAsAbsoluteUrlOrNull("src"),
 			contentRating = null,
@@ -163,6 +175,7 @@ internal class MangaLibComParser(
 			description = doc.selectFirst("#fdesc")?.text()?.trim(),
 			coverUrl = doc.selectFirst(".fposter img")?.attrAsAbsoluteUrlOrNull("src") ?: manga.coverUrl,
 			state = state,
+			rating = parseRating(doc).takeIf { it != RATING_UNKNOWN } ?: manga.rating,
 			tags = doc.select("ul.mangainfo a[href*=/tags/]").mapNotNullToSet { a ->
 				val title = a.text().trim().toTitleCase(sourceLocale).takeIf { it.isNotEmpty() }
 					?: return@mapNotNullToSet null

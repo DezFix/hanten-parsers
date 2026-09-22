@@ -270,11 +270,17 @@ internal abstract class GroupleParser(
             state = if (isRestricted) {
                 MangaState.RESTRICTED
             } else {
-                parseProductionState(root) ?: manga.state
+                // New engine puts .cr-info-details outside div.leftContent,
+                // so fall back to the whole document body
+                parseProductionState(root) ?: parseProductionState(doc.body()) ?: manga.state
             },
-            authors = root.select(".elem_author,.elem_illustrator,.elem_screenwriter")
-                .select("a.person-link")
-                .mapNotNullToSet { it.textOrNull() } + manga.authors,
+            authors = root.select(
+                ".elem_author a.person-link, .elem_illustrator a.person-link, " +
+                    ".elem_screenwriter a.person-link, " +
+                    // New engine markup: main author card, team links excluded
+                    ".cr-main-person-item__name a[href*='/list/person/'], " +
+                    "a.cr-main-person-item[href*='/list/person/']",
+            ).mapNotNullToSet { it.textOrNull() } + manga.authors,
             contentRating = (if (hasNsfwAlert) ContentRating.SUGGESTIVE else ContentRating.SAFE)
                 .coerceAtLeast(manga.contentRating ?: ContentRating.SAFE),
             chapters = parsedChapters,
@@ -613,6 +619,7 @@ internal abstract class GroupleParser(
             return null
         }
         val author = tileInfo?.selectFirst("a.person-link")?.text()
+            ?: tileInfo?.selectFirst("a[href*='/list/person/']:not(.cr-team-item)")?.text()
         return Manga(
             id = generateUid(relUrl),
             url = relUrl,

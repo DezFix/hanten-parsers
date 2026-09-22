@@ -231,6 +231,15 @@ internal class RemangaParser(
 			it.getLong("id") to it.optJSONObject("publishers")?.getStringOrNull("name")
 		}
 		val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+		val apiState = when (jo.optJSONObject("status")?.getIntOrDefault("id", -1) ?: -1) {
+			1 -> MangaState.FINISHED
+			2 -> MangaState.ONGOING
+			3 -> MangaState.PAUSED
+			4 -> MangaState.ABANDONED
+			5 -> MangaState.UPCOMING
+			6 -> MangaState.RESTRICTED
+			else -> null
+		}
 		return Manga(
 			id = generateUid(url),
 			url = url,
@@ -241,20 +250,15 @@ internal class RemangaParser(
 			rating = jo.getFloatOrDefault("avg_rating", -10f) / 10f,
 			coverUrl = cover.getStringOrNull("mid")?.toAbsoluteUrl("api.$domain"),
 			largeCoverUrl = cover.getStringOrNull("high")?.toAbsoluteUrl("api.$domain"),
-			authors = emptySet(),
+			authors = parseCreators(jo),
 			contentRating = when (jo.optJSONObject("age_limit")?.getIntOrDefault("id", -1)) {
 				0 -> ContentRating.SAFE
 				1, 2 -> ContentRating.SUGGESTIVE
 				else -> null
 			},
-			state = when (jo.optJSONObject("status")?.getIntOrDefault("id", -1) ?: -1) {
-				1 -> MangaState.FINISHED
-				2 -> MangaState.ONGOING
-				3 -> MangaState.PAUSED
-				4 -> MangaState.ABANDONED
-				5 -> MangaState.UPCOMING
-				6 -> MangaState.RESTRICTED
-				else -> null
+			state = when {
+				jo.getBooleanOrDefault("is_forbidden", false) -> MangaState.RESTRICTED
+				else -> apiState
 			},
 			tags = jo.optJSONArray("genres")?.mapJSONToSet { g ->
 				MangaTag(
@@ -346,6 +350,28 @@ internal class RemangaParser(
 		SortOrder.RATING -> "-votes"
 		SortOrder.NEWEST -> "-id"
 		else -> "-chapter_date"
+	}
+
+	private fun parseCreators(jo: JSONObject): Set<String> {
+		val arr = jo.optJSONArray("creators") ?: return emptySet()
+		val result = HashSet<String>()
+		for (i in 0 until arr.length()) {
+			val cjo = arr.optJSONObject(i) ?: continue
+			val role = cjo.optJSONObject("type")?.getStringOrNull("name")
+				?: cjo.optJSONObject("role")?.getStringOrNull("name")
+				?: (cjo.opt("role") as? String)
+			if (role != null &&
+				(role.contains("перевод", ignoreCase = true) || role.contains("translat", ignoreCase = true))
+			) {
+				continue
+			}
+			val name = (cjo.opt("name") as? String)
+				?: ((cjo.opt("creator") as? JSONObject)?.opt("name") as? String)
+			if (!name.isNullOrBlank()) {
+				result.add(name)
+			}
+		}
+		return result
 	}
 
 	private fun parsePage(jo: JSONObject) = MangaPage(

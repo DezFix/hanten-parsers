@@ -208,10 +208,18 @@ internal abstract class LibSocialParser(
 	}
 
 	private fun JSONObject.parseSummary(): String? {
-		// legacy plain-text summary
-		getStringOrNull("summary")?.let { return it }
+		// getStringOrNull() stringifies ANY value, so a TipTap object would leak
+		// as raw JSON text — check the actual type first.
+		return when (val raw = opt("summary")) {
+			null, JSONObject.NULL -> null
+			is String -> raw.takeIf { it.isNotBlank() }
+			is JSONObject -> parseTipTapDoc(raw)
+			else -> null
+		}
+	}
+
+	private fun parseTipTapDoc(doc: JSONObject): String? {
 		// TipTap doc: {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"..."}]}]}
-		val doc = optJSONObject("summary") ?: return null
 		return buildString {
 			doc.optJSONArray("content")?.asTypedList<JSONObject>()?.forEach { block ->
 				block.optJSONArray("content")?.asTypedList<JSONObject>()?.forEach { node ->
@@ -321,7 +329,6 @@ internal abstract class LibSocialParser(
 			.build()
 		val json = webClient.httpGet(url).parseJson().getJSONArray("data")
 		val builder = ChaptersListBuilder(json.length())
-		val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
 		val useBranching = config[splitTranslationsKey]
 		for (i in 0 until json.length()) {
 			val jo = json.getJSONObject(i)
@@ -358,7 +365,7 @@ internal abstract class LibSocialParser(
 						}
 					},
 					scanlator = team,
-					uploadDate = dateFormat.parseSafe(bjo.getStringOrNull("created_at")),
+					uploadDate = parseLibDate(bjo.getStringOrNull("created_at")),
 					branch = if (useBranching) team else null,
 					source = source,
 				)
@@ -410,8 +417,19 @@ internal abstract class LibSocialParser(
 		return result
 	}
 
-	private fun <V> IntObjectMap<V>.keyOf(value: V): Int {
-		forEach { k, v ->
+	private fun parseLibDate(raw: String?): Long {
+		if (raw.isNullOrBlank()) {
+			return 0L
+		}
+		// API sends microseconds (2016-12-16T09:16:50.000000Z) but SimpleDateFormat
+		// understands only millis — trim the fraction to 3 digits first.
+		val normalized = MICROSECONDS_REGEX.replace(raw.trim()) { match ->
+			match.groupValues[1] + match.groupValues[2]
+		}
+		return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).parseSafe(normalized)
+	}
+
+	private fun <V> IntObjectMap<V>.keyOf(value: V): Int {		forEach { k, v ->
 			if (v == value) {
 				return k
 			}
@@ -465,6 +483,8 @@ internal abstract class LibSocialParser(
 	protected companion object {
 
 		private const val AUTH_CACHE_TTL_MILLIS = 60_000L
+
+		private val MICROSECONDS_REGEX = Regex("(\\.\\d{3})\\d+(Z|[+-]\\d{2}:?\\d{2})?$")
 
 		const val SERVER_MAIN = "main"
 		const val SERVER_SECONDARY = "secondary"

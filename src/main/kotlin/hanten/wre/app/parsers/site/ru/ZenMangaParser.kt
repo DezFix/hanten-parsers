@@ -2,6 +2,7 @@ package hanten.wre.app.parsers.site.ru
 
 import okhttp3.Headers
 import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import hanten.wre.app.parsers.MangaLoaderContext
@@ -33,6 +34,8 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 
 	private companion object {
 
+		val CONTENT_HREF_REGEX = Regex("^/content/[a-z0-9-]+$")
+
 		val descriptionRegex = Regex("description:\"((?:[^\"\\\\]|\\\\.)*)\"")
 
 		val chapterObjectRegex = Regex("\\{id:\"([0-9a-f-]{36})\"")
@@ -54,34 +57,24 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 
 	override val configKeyDomain = ConfigKey.Domain("inkstory.net", "inkstory.me")
 
+	// Only popularity order is backed by the SSR catalog for now
 	override val availableSortOrders: Set<SortOrder> = EnumSet.of(
 		SortOrder.POPULARITY,
-		SortOrder.POPULARITY_ASC,
-		SortOrder.RATING,
-		SortOrder.RATING_ASC,
-		SortOrder.NEWEST,
-		SortOrder.NEWEST_ASC
 	)
 
 	override val filterCapabilities: MangaListFilterCapabilities = MangaListFilterCapabilities(
 		isSearchSupported = true,
-		isMultipleTagsSupported = true,
-		isTagsExclusionSupported = true,
-		isYearRangeSupported = true,
-		isSearchWithFiltersSupported = true,
-		isAuthorSearchSupported = true,
 	)
 
 	override val authUrl: String
 		get() = "https://sso.inuko.me/account/sign-in"
 
-	private val apiDomain = if (domain.startsWith("v1.")) domain.replace("v1.", "api.") else "api.$domain"
+	private val apiDomain = "api.inuko.me"
 
 	private fun checkAuth(): Boolean {
 		val authCookieName = "__otaku_session"
-		return context.cookieJar.getCookies("zenmanga.io").any { it.name == authCookieName } ||
-			context.cookieJar.getCookies("v1.zenmanga.one").any { it.name == authCookieName } ||
-			context.cookieJar.getCookies("v1.zenmanga.me").any { it.name == authCookieName }
+		return context.cookieJar.getCookies("inkstory.net").any { it.name == authCookieName } ||
+			context.cookieJar.getCookies("inuko.me").any { it.name == authCookieName }
 	}
 
 	override suspend fun isAuthorized(): Boolean {
@@ -104,154 +97,48 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-		if (!filter.author.isNullOrBlank()) {
-			return getListPageByAuthor(filter.author, page)
-		}
-
-		val urlBuilder = HttpUrl.Builder()
-			.scheme("https")
-			.host(apiDomain)
-			.addPathSegment("v2")
-			.addPathSegment("books")
-
-		urlBuilder.addQueryParameter("page", page.toString())
-		urlBuilder.addQueryParameter("size", pageSize.toString())
-
-		urlBuilder.addQueryParameter("sort", getSortParameter(order))
-
-		if (!filter.query.isNullOrBlank()) {
-			urlBuilder.addQueryParameter("search", filter.query)
-		}
-
-		filter.tags.forEach { tag ->
-			urlBuilder.addQueryParameter("labelsInclude", tag.key)
-		}
-
-		filter.tagsExclude.forEach { tag ->
-			urlBuilder.addQueryParameter("labelsExclude", tag.key)
-		}
-
-		filter.states.forEach { state ->
-			urlBuilder.addQueryParameter("status", when(state) {
-				MangaState.ONGOING -> "ONGOING"
-				MangaState.FINISHED -> "DONE"
-				MangaState.PAUSED -> "FROZEN"
-				MangaState.UPCOMING -> "ANNOUNCE"
-				else -> ""
-			})
-		}
-
-		filter.contentRating.forEach { rating ->
-			urlBuilder.addQueryParameter("contentStatus", when(rating) {
-				ContentRating.SAFE -> "SAFE"
-				ContentRating.SUGGESTIVE -> "UNSAFE"
-				ContentRating.ADULT -> "EROTIC"
-			})
-		}
-
-		if (filter.yearFrom != YEAR_UNKNOWN) {
-			urlBuilder.addQueryParameter("yearMin", filter.yearFrom.toString())
-		}
-		if (filter.yearTo != YEAR_UNKNOWN) {
-			urlBuilder.addQueryParameter("yearMax", filter.yearTo.toString())
-		}
-
-		val requestUrl = urlBuilder.build()
-		val response = webClient.httpGet(requestUrl).parseJsonArray()
-
-		return response.mapJSON { parseMangaFromJson(it) }
-	}
-
-	private suspend fun getListPageByAuthor(authorQuery: String, page: Int): List<Manga> {
-		val authorSearchUrl = HttpUrl.Builder()
-			.scheme("https")
-			.host(apiDomain)
-			.addPathSegment("v2")
-			.addPathSegment("publishers")
-			.addQueryParameter("search", authorQuery)
-			.build()
-
-		val publishersResponse = webClient.httpGet(authorSearchUrl).parseJsonArray()
-
-		var authorId: String? = null
-		for (i in 0 until publishersResponse.length()) {
-			val publisher = publishersResponse.getJSONObject(i)
-			if (publisher.getStringOrNull("kind") == "AUTHOR") {
-				authorId = publisher.getStringOrNull("id")
-				break
-			}
-		}
-
-		if (authorId == null) {
-			return emptyList()
-		}
-
-		val booksByAuthorUrl = HttpUrl.Builder()
-			.scheme("https")
-			.host(apiDomain)
-			.addPathSegment("v2")
-			.addPathSegment("books")
-			.addQueryParameter("publisherId", authorId)
+		// The v2/books API is gone (api.inkstory.net dead, api.inuko.me/books returns []),
+		// so the list comes from the server-rendered catalog. Only pagination
+		// and text search are supported this way; details fill the rest.
+		// Note: ?page=N renders content page N+1, matching our 0-based index.
+		val urlBuilder = "https://$domain/content".toHttpUrl().newBuilder()
 			.addQueryParameter("page", page.toString())
-			.addQueryParameter("size", pageSize.toString())
-			.addQueryParameter("sort", "createdAt,desc")
-			.build()
-
-		val booksResponse = webClient.httpGet(booksByAuthorUrl).parseJsonArray()
-
-		return booksResponse.mapJSON { parseMangaFromJson(it) }
-	}
-
-	private fun parseMangaFromJson(json: JSONObject): Manga {
-		val slug = json.getString("slug")
-		val nameObj = json.getJSONObject("name")
-		val title = nameObj.getStringOrNull("ru") ?: nameObj.getString("en")
-
-		val publicUrl = "https://$domain/content/$slug"
-
-		val altNames = json.getJSONArray("altNames")
-			.mapJSON { it.getString("name") }
-			.toSet()
-
-		return Manga(
-			id = generateUid(publicUrl),
-			url = "/content/$slug",
-			publicUrl = "https://$domain/content/$slug",
-			title = title,
-			altTitles = altNames,
-			coverUrl = json.getStringOrNull("poster"),
-			source = source,
-			rating = json.getDouble("averageRating").toFloat() / 10f,
-			state = when (json.getStringOrNull("status")) {
-				"ONGOING" -> MangaState.ONGOING
-				"DONE" -> MangaState.FINISHED
-				"FROZEN" -> MangaState.PAUSED
-				"ANNOUNCE" -> MangaState.UPCOMING
-				else -> null
-			},
-			contentRating = when (json.getStringOrNull("contentStatus")) {
-				"SAFE" -> ContentRating.SAFE
-				"UNSAFE" -> ContentRating.SUGGESTIVE
-				"EROTIC" -> ContentRating.ADULT
-				else -> null
-			},
-			tags = emptySet(),
-			authors = emptySet()
-		)
-	}
-
-	private fun getSortParameter(order: SortOrder): String {
-		val field = when (order) {
-			SortOrder.POPULARITY, SortOrder.POPULARITY_ASC -> "viewsCount"
-			SortOrder.RATING, SortOrder.RATING_ASC -> "averageRating"
-			SortOrder.NEWEST, SortOrder.NEWEST_ASC -> "createdAt"
-			else -> "viewsCount"
+		filter.query?.takeIf { it.isNotBlank() }?.let {
+			urlBuilder.addQueryParameter("search", it)
 		}
-		val direction = when (order) {
-			SortOrder.POPULARITY_ASC, SortOrder.RATING_ASC, SortOrder.NEWEST_ASC -> "asc"
-			else -> "desc"
+		val doc = webClient.httpGet(urlBuilder.build()).parseHtml()
+		val result = ArrayList<Manga>()
+		val seen = HashSet<String>()
+		for (a in doc.select("a[href]")) {
+			val href = a.attr("href")
+			if (!CONTENT_HREF_REGEX.matches(href) || !seen.add(href)) {
+				continue
+			}
+			// Cards carry a poster image; nav/service links (like /content/top) don't
+			val img = a.selectFirst("img") ?: continue
+			val title = img.attr("alt").trim().takeUnless { it.isEmpty() }
+				?: a.text().trim().takeUnless { it.isEmpty() }
+				?: continue
+			val cover = img.attr("src").trim().takeUnless { it.isEmpty() }
+			val publicUrl = href.toAbsoluteUrl(domain)
+			result.add(
+				Manga(
+					id = generateUid(publicUrl),
+					url = href,
+					publicUrl = publicUrl,
+					title = title,
+					altTitles = emptySet(),
+					coverUrl = cover,
+					source = source,
+					rating = RATING_UNKNOWN,
+					state = null,
+					contentRating = null,
+					tags = emptySet(),
+					authors = emptySet(),
+				),
+			)
 		}
-		return "$field,$direction"
+		return result
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
@@ -337,7 +224,7 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
 		val chapterId = chapter.url.substringAfterLast('/')
 		val json = webClient.httpGet(
-			"https://api.$domain/v2/chapters/$chapterId",
+			"https://$apiDomain/v2/chapters/$chapterId",
 			getRequestHeaders(),
 		).parseJson()
 		return json.getJSONArray("pages").mapJSON { pageMap ->
@@ -372,67 +259,10 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getFilterOptions(): MangaListFilterOptions {
-		return MangaListFilterOptions(
-			availableTags = allGenres.toSet(),
-			availableStates = allStates,
-			availableContentRating = allContentRatings
-		)
+		// The HTML catalog supports text search only; tags/states/ratings
+		// need the books API which is currently unavailable.
+		return MangaListFilterOptions()
 	}
-
-	private val allGenres: List<MangaTag> = listOf(
-		MangaTag(key = "art", title = "Арт", source = source),
-		MangaTag(key = "martial_arts", title = "Боевые искусства", source = source),
-		MangaTag(key = "vampires", title = "Вампиры", source = source),
-		MangaTag(key = "harem", title = "Гарем", source = source),
-		MangaTag(key = "gender_intriga", title = "Гендерная интрига", source = source),
-		MangaTag(key = "detective", title = "Детектив", source = source),
-		MangaTag(key = "josei", title = "Дзёсэй", source = source),
-		MangaTag(key = "game", title = "Игра", source = source),
-		MangaTag(key = "cyberpunk", title = "Киберпанк", source = source),
-		MangaTag(key = "maho_shoujo", title = "Махо-сёдзё", source = source),
-		MangaTag(key = "mecha", title = "Меха", source = source),
-		MangaTag(key = "mystery", title = "Мистика", source = source),
-		MangaTag(key = "sci_fi", title = "Научная фантастика", source = source),
-		MangaTag(key = "natural", title = "Повседневность", source = source),
-		MangaTag(key = "postapocalypse", title = "Постапокалипсис", source = source),
-		MangaTag(key = "adventure", title = "Приключения", source = source),
-		MangaTag(key = "psychological", title = "Психология", source = source),
-		MangaTag(key = "samurai", title = "Самураи", source = source),
-		MangaTag(key = "supernatural", title = "Сверхъестественное", source = source),
-		MangaTag(key = "sports", title = "Спорт", source = source),
-		MangaTag(key = "seinen", title = "Сэйнэн", source = source),
-		MangaTag(key = "thriller", title = "Триллер", source = source),
-		MangaTag(key = "horror", title = "Ужасы", source = source),
-		MangaTag(key = "fantastic", title = "Фантастика", source = source),
-		MangaTag(key = "fantasy", title = "Фэнтези", source = source),
-		MangaTag(key = "school", title = "Школа", source = source),
-		MangaTag(key = "erotica", title = "Эротика", source = source),
-		MangaTag(key = "ecchi", title = "Этти", source = source),
-		MangaTag(key = "codomo", title = "Кодомо", source = source),
-		MangaTag(key = "isekai", title = "Исекай", source = source),
-		MangaTag(key = "omegavers", title = "Омегаверс", source = source),
-		MangaTag(key = "comedy", title = "Комедия", source = source),
-		MangaTag(key = "shounen", title = "Сёнэн", source = source),
-		MangaTag(key = "romance", title = "Романтика", source = source),
-		MangaTag(key = "drama", title = "Драма", source = source),
-		MangaTag(key = "shoujo", title = "Сёдзё", source = source),
-		MangaTag(key = "historical", title = "История", source = source),
-		MangaTag(key = "tragedy", title = "Трагедия", source = source),
-		MangaTag(key = "action", title = "Боевик", source = source)
-	).sortedBy { it.title }
-
-	private val allStates: Set<MangaState> = EnumSet.of(
-		MangaState.ONGOING,
-		MangaState.FINISHED,
-		MangaState.PAUSED,
-		MangaState.UPCOMING
-	)
-
-	private val allContentRatings: Set<ContentRating> = EnumSet.of(
-		ContentRating.SAFE,
-		ContentRating.SUGGESTIVE,
-		ContentRating.ADULT
-	)
 
 	private class AstroJsonParser {
 		fun parse(compressedJson: String): Map<*, *>? {

@@ -3,12 +3,15 @@ package hanten.wre.app.parsers.site.ru
 import androidx.collection.ArrayMap
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 import hanten.wre.app.parsers.InternalParsersApi
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.core.PagedMangaParser
+import hanten.wre.app.parsers.exception.ParseException
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
 import hanten.wre.app.parsers.util.json.*
@@ -23,108 +26,92 @@ internal class MangaWtfParser(
 	override val availableSortOrders: Set<SortOrder> =
 		EnumSet.of(
 			SortOrder.POPULARITY,
-			SortOrder.RATING,
-			SortOrder.UPDATED,
-			SortOrder.NEWEST,
 		)
 
 	@InternalParsersApi
 	override val configKeyDomain = ConfigKey.Domain("inkstory.net", "manga.wtf")
 
+	// Backend moved: api.inkstory.net is dead, live API is api.inuko.me.
+	// /v2/books list, /label tags and /book related are gone; the list comes
+	// from the server-rendered catalog instead.
+	private fun apiUrl() = HttpUrl.Builder().scheme(SCHEME_HTTPS).host(API_HOST)
+
 	override val filterCapabilities: MangaListFilterCapabilities
 		get() = MangaListFilterCapabilities(
-			isMultipleTagsSupported = true,
-			isTagsExclusionSupported = true,
 			isSearchSupported = true,
 		)
 
-	override suspend fun getFilterOptions() = MangaListFilterOptions(
-		availableTags = fetchAvailableTags(),
-		availableStates = EnumSet.of(
-			MangaState.UPCOMING,
-			MangaState.PAUSED,
-			MangaState.ONGOING,
-			MangaState.FINISHED,
-		),
-		availableContentRating = EnumSet.allOf(ContentRating::class.java),
-	)
+	override suspend fun getFilterOptions() = MangaListFilterOptions()
 
 	init {
 		paginator.firstPage = 0
 		searchPaginator.firstPage = 0
 	}
 
-	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-		val url =
-			urlBuilder("api")
-				.addPathSegment("v2")
-				.addPathSegment("books")
-				.addQueryParameter("page", page.toString())
-				.addQueryParameter("size", pageSize.toString())
-				.addQueryParameter("type", "COMIC")
-		when {
-			filter.query.isNullOrEmpty() -> {
-				url.addQueryParameter(
-					"sort",
-					when (order) {
-						SortOrder.UPDATED -> "updatedAt,desc"
-						SortOrder.POPULARITY -> "viewsCount,desc"
-						SortOrder.RATING -> "likesCount,desc"
-						SortOrder.NEWEST -> "createdAt,desc"
-						else -> throw IllegalArgumentException("Unsupported $order")
-					},
-				)
-				if (filter.tags.isNotEmpty()) {
-					url.addQueryParameter("labelsInclude", filter.tags.joinToString(",") { it.key })
-				}
-				if (filter.tagsExclude.isNotEmpty()) {
-					url.addQueryParameter("labelsExclude", filter.tags.joinToString(",") { it.key })
-				}
-				if (filter.states.isNotEmpty()) {
-					url.addQueryParameter(
-						"status",
-						filter.states.joinToString(",") {
-							when (it) {
-								MangaState.ONGOING -> "ONGOING"
-								MangaState.FINISHED -> "DONE"
-								MangaState.ABANDONED -> ""
-								MangaState.PAUSED -> "FROZEN"
-								MangaState.UPCOMING -> "ANNOUNCE"
-								else -> throw IllegalArgumentException("$it not supported")
-							}
-						},
-					)
-				}
-				if (filter.contentRating.isNotEmpty()) {
-					url.addQueryParameter(
-						"contentStatus",
-						filter.contentRating.joinToString(",") {
-							when (it) {
-								ContentRating.SAFE -> "SAFE"
-								ContentRating.SUGGESTIVE -> "UNSAFE,EROTIC"
-								ContentRating.ADULT -> "PORNOGRAPHIC"
-							}
-						},
-					)
-				}
-			}
+	companion object {
 
-			else -> {
-				url.addQueryParameter("search", filter.query)
-			}
+		private const val API_HOST = "api.inuko.me"
+
+		private val CONTENT_HREF_REGEX = Regex("^/content/[a-z0-9-]+$")
+
+		private val BOOK_ID_REGEX = Regex("\\{id:\"([0-9a-f-]{36})\"")
+	}
+
+	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
+		// The /v2/books list endpoint is gone; the list comes from the
+		// server-rendered catalog (?page=N renders content page N+1).
+		// Only pagination and text search are supported this way.
+		val urlBuilder = "https://$domain/content".toHttpUrl().newBuilder()
+			.addQueryParameter("page", page.toString())
+		filter.query?.takeIf { it.isNotBlank() }?.let {
+			urlBuilder.addQueryParameter("search", it)
 		}
-		val ja = webClient.httpGet(url.build()).parseJsonArray()
-		return ja.mapJSON { jo -> jo.toManga() }
+		val doc = webClient.httpGet(urlBuilder.build()).parseHtml()
+		val result = ArrayList<Manga>()
+		val seen = HashSet<String>()
+		for (a in doc.select("a[href]")) {
+			val href = a.attr("href")
+			if (!CONTENT_HREF_REGEX.matches(href) || !seen.add(href)) {
+				continue
+			}
+			// Cards carry a poster image; nav/service links don't
+			val img = a.selectFirst("img") ?: continue
+			val title = img.attr("alt").trim().takeUnless { it.isEmpty() }
+				?: a.text().trim().takeUnless { it.isEmpty() }
+				?: continue
+			val cover = img.attr("src").trim().takeUnless { it.isEmpty() }
+			val publicUrl = href.toAbsoluteUrl(domain)
+			result.add(
+				Manga(
+					id = generateUid(publicUrl),
+					url = href,
+					publicUrl = publicUrl,
+					title = title,
+					altTitles = emptySet(),
+					coverUrl = cover,
+					source = source,
+					rating = RATING_UNKNOWN,
+					state = null,
+					contentRating = null,
+					tags = emptySet(),
+					authors = emptySet(),
+				),
+			)
+		}
+		return result
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga =
 		coroutineScope {
-			val chaptersDeferred = async { getChapters(manga.url) }
+			// HTML catalog items carry /content/{slug} urls; the API works with book ids
+			val bookId = manga.url.takeUnless { it.startsWith("/content/") }
+				?: resolveBookId(manga.url.substringAfterLast('/'))
+			val chaptersDeferred = async { getChapters(bookId) }
 			val url =
-				urlBuilder("api")
+				apiUrl()
 					.addPathSegment("v2")
 					.addPathSegment("books")
-					.addPathSegment(manga.url)
+					.addPathSegment(bookId)
 			val jo = webClient.httpGet(url.build()).parseJson()
 			val isNsfwSource = jo.getStringOrNull("contentStatus").isNsfw()
 			Manga(
@@ -154,7 +141,7 @@ internal class MangaWtfParser(
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
 		val url =
-			urlBuilder("api")
+			apiUrl()
 				.addPathSegment("v2")
 				.addPathSegment("chapters")
 				.addPathSegment(chapter.url)
@@ -169,33 +156,22 @@ internal class MangaWtfParser(
 		}
 	}
 
-	private suspend fun fetchAvailableTags(): Set<MangaTag> {
-		val url = urlBuilder("api").addPathSegment("label")
-		val json = webClient.httpGet(url.build()).parseJson()
-		return json.getJSONArray("content").mapJSONToSet { jo ->
-			MangaTag(
-				title = jo.getJSONObject("name").getString("ru").toTitleCase(sourceLocale),
-				key = jo.getString("slug"),
-				source = source,
-			)
-		}
+	override suspend fun getRelatedManga(seed: Manga): List<Manga> {
+		// The /book related endpoint is gone with the old API host
+		return emptyList()
 	}
 
-	override suspend fun getRelatedManga(seed: Manga): List<Manga> {
-		val url =
-			urlBuilder("api")
-				.addPathSegment("book")
-				.addPathSegment(seed.url)
-				.addPathSegment("related")
-		val ja = webClient.httpGet(url.build()).parseJsonArray()
-		return ja.mapJSON { jo -> jo.toManga() }
+	private suspend fun resolveBookId(slug: String): String {
+		val html = webClient.httpGet("https://$domain/content/$slug").parseHtml().html()
+		return BOOK_ID_REGEX.find(html)?.groupValues?.get(1)
+			?: throw ParseException("Cannot resolve book id for $slug", slug)
 	}
 
 	override suspend fun getPageUrl(page: MangaPage): String = page.url
 
 	private suspend fun getChapters(mangaId: String): List<MangaChapter> {
 		val url =
-			urlBuilder("api")
+			apiUrl()
 				.addPathSegment("v2")
 				.addPathSegment("chapters")
 				.addQueryParameter("bookId", mangaId)
@@ -224,7 +200,7 @@ internal class MangaWtfParser(
 	private suspend fun getBranchName(id: String): String? =
 		runCatchingCancellable {
 			val url =
-				urlBuilder("api")
+				apiUrl()
 					.addPathSegment("branch")
 					.addPathSegment(id)
 			val json = webClient.httpGet(url.build()).parseJson()
@@ -253,21 +229,4 @@ internal class MangaWtfParser(
 			source = source,
 		)
 
-	private fun JSONObject.toManga(): Manga {
-		val isNsfwSource = getStringOrNull("contentStatus").isNsfw()
-		return Manga(
-			id = generateUid(getString("id")),
-			title = getJSONObject("name").getString("ru"),
-			altTitles = setOfNotNull(getJSONObject("name").getStringOrNull("en")),
-			url = getString("id"),
-			publicUrl = "https://$domain/content/${getString("slug")}",
-			rating = getFloatOrDefault("averageRating", -10f) / 10f,
-			contentRating = if (isNsfwSource) ContentRating.ADULT else null,
-			coverUrl = getString("poster"),
-			tags = setOf(),
-			state = getStringOrNull("status")?.toMangaState(),
-			authors = emptySet(),
-			source = source,
-		)
-	}
 }

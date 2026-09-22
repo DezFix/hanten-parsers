@@ -7,6 +7,7 @@ import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.core.PagedMangaParser
+import hanten.wre.app.parsers.exception.ContentUnavailableException
 import hanten.wre.app.parsers.exception.ParseException
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
@@ -48,6 +49,22 @@ internal class JoilmangParser(
 			return null
 		}
 		return doc
+	}
+
+	/**
+	 * Takedown notice ("removed over a copyright holder complaint") lives in the
+	 * page content; the footer mentions правообладателям on EVERY page, so it is
+	 * stripped first to avoid false positives on catalogs and healthy titles.
+	 */
+	private fun isTakedown(doc: Document): Boolean {
+		val body = doc.body()?.clone() ?: return false
+		body.select("footer, header, nav").remove()
+		val text = body.text()
+		return text.contains("по требованию правообладателя", ignoreCase = true) ||
+			text.contains("copyright holder", ignoreCase = true) ||
+			text.contains("dmca", ignoreCase = true) ||
+			(text.contains("правообладател", ignoreCase = true) &&
+				(text.contains("удален", ignoreCase = true) || text.contains("заблокирован", ignoreCase = true)))
 	}
 
 	private fun isCheckpoint(doc: Document): Boolean {
@@ -214,6 +231,14 @@ internal class JoilmangParser(
 			)
 		}.reversed()
 		if (chapters.isEmpty()) {
+			// Takedown reached via WebView path (e.g. after a checkpoint):
+			// mark unavailable instead of a cryptic parse error.
+			if (isTakedown(doc)) {
+				return manga.copy(
+					state = MangaState.RESTRICTED,
+					chapters = emptyList(),
+				)
+			}
 			throw ParseException("Chapter list not found", manga.url)
 		}
 		return manga.copy(
@@ -237,6 +262,11 @@ internal class JoilmangParser(
 				preview = null,
 				source = source,
 			)
-		}.ifEmpty { throw ParseException("No pages found", chapter.url) }
+		}.ifEmpty {
+			if (isTakedown(doc)) {
+				throw ContentUnavailableException("Тайтл удалён по требованию правообладателя")
+			}
+			throw ParseException("No pages found", chapter.url)
+		}
 	}
 }

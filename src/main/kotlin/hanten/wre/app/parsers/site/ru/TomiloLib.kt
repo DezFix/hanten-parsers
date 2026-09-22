@@ -33,6 +33,9 @@ import hanten.wre.app.parsers.util.parseSafe
 import hanten.wre.app.parsers.util.toAbsoluteUrl
 import hanten.wre.app.parsers.util.suspendlazy.suspendLazy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -194,21 +197,25 @@ internal class TomiloLib(context: MangaLoaderContext) :
 		),
 	)
 
-	private suspend fun fetchChapters(titleId: String, slug: String): List<MangaChapter> {
-		val result = ArrayList<MangaChapter>()
-		var page = 1
-		while (page <= MAX_CHAPTER_PAGES) {
-			val (batch, hasMore) = fetchChapterPage(titleId, page, slug)
-			result += batch
-			if (batch.isEmpty() || !hasMore) {
-				break
-			}
-			page++
+	private suspend fun fetchChapters(titleId: String, slug: String): List<MangaChapter> = coroutineScope {
+		val (first, hasMore, totalPages) = fetchChapterPage(titleId, 1, slug)
+		if (!hasMore || totalPages <= 1) {
+			return@coroutineScope first
 		}
-		return result
+		// Pages are independent — fetch them concurrently instead of one by one
+		val rest = (2..minOf(totalPages, MAX_CHAPTER_PAGES)).map { page ->
+			async { fetchChapterPage(titleId, page, slug).batch }
+		}.awaitAll()
+		return@coroutineScope first + rest.flatten()
 	}
 
-	private suspend fun fetchChapterPage(titleId: String, page: Int, slug: String): Pair<List<MangaChapter>, Boolean> {
+	private data class ChapterPage(
+		val batch: List<MangaChapter>,
+		val hasMore: Boolean,
+		val totalPages: Int,
+	)
+
+	private suspend fun fetchChapterPage(titleId: String, page: Int, slug: String): ChapterPage {
 		val data = retryIO {
 			webClient.httpGet(
 				apiUrl("chapters/title/$titleId").newBuilder()
@@ -219,14 +226,16 @@ internal class TomiloLib(context: MangaLoaderContext) :
 				getRequestHeaders(),
 			).parseJson()
 				.optJSONObject("data")
-		} ?: return emptyList<MangaChapter>() to false
+		} ?: return ChapterPage(emptyList(), false, 1)
 		val chapters = data.optJSONArray("chapters") ?: JSONArray()
 		val batch = parseChapters(chapters, titleId, slug)
 		// The server may cap the page size below the requested limit,
 		// so the pagination flag (not the batch size) drives the loop
-		val hasMore = data.optJSONObject("pagination")?.optBoolean("hasMore")
+		val pagination = data.optJSONObject("pagination")
+		val hasMore = pagination?.optBoolean("hasMore")
 			?: (batch.size >= CHAPTERS_PAGE_SIZE)
-		return batch to hasMore
+		val totalPages = pagination?.optInt("pages", 1) ?: 1
+		return ChapterPage(batch, hasMore, totalPages.coerceAtLeast(1))
 	}
 
 	private suspend fun parseManga(info: JSONObject?, withDetails: Boolean): Manga? {
@@ -251,8 +260,7 @@ internal class TomiloLib(context: MangaLoaderContext) :
 			altTitles = parseStringSet(info.optJSONArray("altNames")),
 			url = url,
 			publicUrl = "https://$domain$url",
-			rating = info.optDouble("averageRating", 0.0).takeIf { it > 0.0 }?.div(10.0)?.toFloat()
-				?: RATING_UNKNOWN,
+		rating = normalizeRating(info.optDouble("averageRating", 0.0)),
 			contentRating = parseContentRating(info),
 			coverUrl = cover,
 			largeCoverUrl = cover,
@@ -277,7 +285,7 @@ internal class TomiloLib(context: MangaLoaderContext) :
 				id = generateUid(url),
 				title = buildChapterTitle(number, ch.getStringOrNull("name")),
 				number = number,
-				volume = 0,
+				volume = ch.optInt("volumeNumber", 0),
 				url = url,
 				scanlator = null,
 				uploadDate = parseDate(ch.getStringOrNull("releaseDate") ?: ch.getStringOrNull("createdAt")),
@@ -285,6 +293,17 @@ internal class TomiloLib(context: MangaLoaderContext) :
 				source = source,
 			)
 		}
+	}
+
+	/**
+	 * Server scale is 0-10, but guard against a 0-100 scale so stars never overflow.
+	 */
+	private fun normalizeRating(value: Double): Float {
+		if (value <= 0.0) {
+			return RATING_UNKNOWN
+		}
+		val normalized = if (value > 10.0) value / 100.0 else value / 10.0
+		return normalized.coerceIn(0.0, 1.0).toFloat()
 	}
 
 	private fun JSONArray.addStringsTo(destination: MutableSet<MangaTag>) {
