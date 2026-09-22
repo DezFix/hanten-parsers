@@ -22,7 +22,7 @@ import hanten.wre.app.parsers.Broken
 import java.text.SimpleDateFormat
 import java.util.*
 
-@MangaSourceParser("ZENMANGA", "ZenManga", "ru")
+@MangaSourceParser("ZENMANGA", "InkStory", "ru")
 internal class ZenMangaParser(context: MangaLoaderContext) :
 	PagedMangaParser(context, MangaParserSource.ZENMANGA, 30),
 	MangaParserAuthProvider {

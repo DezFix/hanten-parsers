@@ -165,6 +165,13 @@ internal class JoilmangParser(
 	}
 
 	override suspend fun getDetails(manga: Manga): Manga {
+		// Fast path for takedown stubs: plain HTML already carries the notice
+		// ("Главы скрыты по требованию правообладателя") while chapters never
+		// render — no need to wait out the WebView fallback.
+		val plain = fetchDocumentOrPlain(manga.url.toAbsoluteUrl(domain), null)
+		if (plain != null && plain.select("details ol li a[href]").isEmpty() && isTakedown(plain)) {
+			return parseTakedownDetails(manga, plain)
+		}
 		// Chapters are JS-rendered: plain HTML only qualifies if it already has them.
 		val doc = fetchDocument(manga.url.toAbsoluteUrl(domain), "details ol li a[href]")
 		val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.US)
@@ -249,6 +256,20 @@ internal class JoilmangParser(
 			state = state,
 			tags = tags,
 			chapters = chapters,
+		)
+	}
+
+	private fun parseTakedownDetails(manga: Manga, doc: Document): Manga {
+		val title = doc.selectFirst("h1.section-heading")?.text()?.trim()?.takeUnless { it.isEmpty() }
+			?: doc.selectFirst("meta[property=og:title]")?.attr("content")?.trim()?.takeUnless { it.isEmpty() }
+			?: manga.title
+		return manga.copy(
+			title = title,
+			description = doc.selectFirst("meta[property=og:description]")?.attr("content")?.trim(),
+			coverUrl = doc.selectFirst("meta[property=og:image]")?.attrAsAbsoluteUrlOrNull("content")
+				?: manga.coverUrl,
+			state = MangaState.RESTRICTED,
+			chapters = emptyList(),
 		)
 	}
 
