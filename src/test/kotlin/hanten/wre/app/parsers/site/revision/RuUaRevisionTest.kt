@@ -14,6 +14,14 @@ import kotlin.time.Duration.Companion.minutes
 /**
  * Revision sweep for RU/UA sources: list + details + pages + domain.
  * Run: ./gradlew test --tests "*RuUaRevisionTest*"
+ *
+ * NOTE on false alarms: some RU hosts drop the TCP connection for non-RU addresses
+ * (DNS resolves, `time_connect` stays 0, no HTTP response at all) — DesuMe, TomiloLib,
+ * WaManga and the old Usagi mirror behave exactly like that. That is server-side geo
+ * filtering, not a parser defect: no request reaches the site, so headers or cookies
+ * cannot change anything. Run this sweep from a Russian network (or via a proxy) to get
+ * a meaningful verdict for them; every other verdict below is based on a real HTTP
+ * response and is geography-independent.
  */
 internal class RuUaRevisionTest {
 
