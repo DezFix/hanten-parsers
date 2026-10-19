@@ -41,7 +41,7 @@ internal class JoilmangParser(
 	}
 
 	private suspend fun fetchDocumentOrPlain(url: String, readySelector: String?): Document? {
-		val doc = runCatching { webClient.httpGet(url).parseHtml() }.getOrNull() ?: return null
+		val doc = runCatchingCancellable { webClient.httpGet(url).parseHtml() }.getOrNull() ?: return null
 		if (isCheckpoint(doc)) {
 			return null
 		}

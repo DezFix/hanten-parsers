@@ -14,6 +14,19 @@ import java.util.*
 private const val PAGE_SIZE = 20
 private const val CHAPTERS_LIMIT = 500
 
+// The catalog mixes text novels with comics. They share the same endpoint,
+// but novels have no manga pages, so they are excluded server-side.
+// Without the filter the parser used to drop them after the response and the
+// paginator counted a shorter list, which skipped titles on the next page.
+private val NON_NOVEL_TYPES = arrayOf(
+	"manhwa",
+	"manga",
+	"manhua",
+	"western",
+	"comic",
+	"Мальописи",
+)
+
 @MangaSourceParser("DGMANGA", "DgManga", "uk")
 internal class DgMangaParser(
 	context: MangaLoaderContext,
@@ -33,7 +46,9 @@ internal class DgMangaParser(
 
 	private fun apiUrl() = "https://dgmanga.app/api"
 
-	private val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+	private val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+		timeZone = TimeZone.getTimeZone("UTC")
+	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
 		val url = buildString {
@@ -42,6 +57,10 @@ internal class DgMangaParser(
 			append(pageSize)
 			append("&page=")
 			append(page)
+			for (type in NON_NOVEL_TYPES) {
+				append("&type%5B%5D=")
+				append(type.urlEncoded())
+			}
 			filter.query?.takeIf { it.isNotEmpty() }?.let {
 				append("&q=")
 				append(it.urlEncoded())
@@ -103,7 +122,7 @@ internal class DgMangaParser(
 			"${apiUrl()}/chapters/title/${manga.url}?limit=$CHAPTERS_LIMIT",
 		).parseJsonArray()
 		return manga.copy(
-			chapters = chaptersJson.asTypedList<JSONObject>().mapChapters { _, cjo ->
+			chapters = chaptersJson.asTypedList<JSONObject>().mapChapters(reversed = true) { _, cjo ->
 				MangaChapter(
 					id = generateUid(cjo.getString("_id")),
 					url = cjo.getString("_id"),

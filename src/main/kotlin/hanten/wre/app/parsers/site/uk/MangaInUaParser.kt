@@ -5,6 +5,7 @@ import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.core.PagedMangaParser
+import hanten.wre.app.parsers.exception.ParseException
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.util.*
 import java.text.SimpleDateFormat
@@ -108,9 +109,9 @@ internal class MangaInUaParser(context: MangaLoaderContext) : PagedMangaParser(
 		val doc = webClient.httpGet(manga.url.toAbsoluteUrl(domain)).parseHtml()
 		val root = doc.body().requireElementById("site-content")
 		val linkToComics = root.requireElementById("linkstocomics")
-		val userHash = doc.select("script").firstNotNullOf { script ->
+		val userHash = doc.select("script").firstNotNullOfOrNull { script ->
 			userHashRegex.find(script.html())?.groupValues?.getOrNull(1)
-		}
+		} ?: throw ParseException("Cannot find user hash", manga.publicUrl)
 		val dateFormat = SimpleDateFormat("dd.MM.yyyy", Locale.US)
 		val chaptersDoc = webClient.httpPost(
 			urlBuilder()
@@ -165,9 +166,9 @@ internal class MangaInUaParser(context: MangaLoaderContext) : PagedMangaParser(
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
 		val fullUrl = chapter.url.toAbsoluteUrl(domain)
 		val doc = webClient.httpGet(fullUrl).parseHtml()
-		val userHash = doc.select("script").firstNotNullOf { script ->
+		val userHash = doc.select("script").firstNotNullOfOrNull { script ->
 			userHashRegex.find(script.html())?.groupValues?.getOrNull(1)
-		}
+		} ?: throw ParseException("Cannot find user hash", chapter.url)
 		val ajaxUrl = urlBuilder().addPathSegment("engine").addPathSegment("ajax").addPathSegment("controller.php")
 			.addEncodedQueryParameter("mod", "load_chapters_image")
 			.addQueryParameter("news_id", doc.requireElementById("comics").attrOrThrow("data-news_id"))

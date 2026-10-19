@@ -242,6 +242,8 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 			val (cid, mid) = pipe
 			return try {
 				webClient.httpGet("$urlApi/v2/chapter/frames/$cid/$mid").parseJson()
+			} catch (e: kotlinx.coroutines.CancellationException) {
+				throw e
 			} catch (e: Exception) {
 				webClient.httpGet("$framesApi/$cid").parseJson()
 			}
@@ -252,6 +254,8 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 			val (mid, rid) = slash
 			return try {
 				webClient.httpGet("$urlApi/v2/chapter/frames/$rid/$mid").parseJson()
+			} catch (e: kotlinx.coroutines.CancellationException) {
+				throw e
 			} catch (e: Exception) {
 				webClient.httpGet("$framesApi/$rid").parseJson()
 			}
@@ -378,6 +382,8 @@ internal class HoneyMangaParser(context: MangaLoaderContext) :
 				?: Regex("\\bEn\\s*:\\s*\"(https://[^\"]+)\"").find(script)?.groups?.get(1)?.value
 				?: Regex("(https://[a-z0-9\\-./]*b-cdn\\.net/public-resources)").find(script)?.value
 				?: IMAGE_BASEURL_FALLBACK
+		} catch (e: kotlinx.coroutines.CancellationException) {
+			throw e
 		} catch (e: Exception) {
 			IMAGE_BASEURL_FALLBACK
 		}

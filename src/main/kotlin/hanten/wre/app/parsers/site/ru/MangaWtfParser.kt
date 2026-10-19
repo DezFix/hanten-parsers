@@ -55,6 +55,8 @@ internal class MangaWtfParser(
 		private val CONTENT_HREF_REGEX = Regex("^/content/[a-z0-9-]+$")
 
 		private val BOOK_ID_REGEX = Regex("\\{id:\"([0-9a-f-]{36})\"")
+
+		private val MICROSECONDS_REGEX = Regex("(\\.\\d{3})\\d+(Z|[+-]\\d{2}:?\\d{2})?$")
 	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
@@ -176,7 +178,9 @@ internal class MangaWtfParser(
 				.addPathSegment("chapters")
 				.addQueryParameter("bookId", mangaId)
 		val ja = webClient.httpGet(url.build()).parseJsonArray()
-		val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSSSS'Z'", Locale.ROOT)
+		val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.ROOT).apply {
+			timeZone = TimeZone.getTimeZone("UTC")
+		}
 		val branches = ArrayMap<String, String>()
 		return ja
 			.mapJSON { jo ->
@@ -190,7 +194,11 @@ internal class MangaWtfParser(
 					volume = volume,
 					url = jo.getString("id"),
 					scanlator = null,
-					uploadDate = dateFormat.parseSafe(jo.getString("createdAt")),
+					uploadDate = dateFormat.parseSafe(
+						jo.getString("createdAt").replace(MICROSECONDS_REGEX) { match ->
+							match.groupValues[1] + match.groupValues[2]
+						},
+					),
 					branch = branches.getOrPut(branchId) { getBranchName(branchId) },
 					source = source,
 				)

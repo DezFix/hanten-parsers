@@ -105,7 +105,7 @@ internal class RemangaParser(
 			urlBuilder.addQueryParameter("issue_year_gte", filter.yearFrom.toString())
 		}
 		if (filter.yearTo != YEAR_UNKNOWN) {
-			urlBuilder.addQueryParameter("issue_year_lte", filter.yearFrom.toString())
+			urlBuilder.addQueryParameter("issue_year_lte", filter.yearTo.toString())
 		}
 		for (age in filter.contentRating) {
 			when (age) {

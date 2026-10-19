@@ -18,6 +18,10 @@ internal class DgMangaParserTest {
 		assertTrue(list.isNotEmpty(), "list is empty")
 		val details = parser.getDetails(list.first())
 		assertTrue(!details.chapters.isNullOrEmpty(), "no chapters")
+		assertTrue(
+			details.chapters!!.zipWithNext().all { (a, b) -> a.number <= b.number },
+			"chapters are not ordered from oldest to newest",
+		)
 		val pages = parser.getPages(details.chapters!!.first())
 		assertTrue(pages.isNotEmpty(), "no pages")
 		assertTrue(pages.all { it.url.startsWith("http") }, "bad page urls")

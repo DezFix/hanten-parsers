@@ -426,7 +426,9 @@ internal abstract class LibSocialParser(
 		val normalized = MICROSECONDS_REGEX.replace(raw.trim()) { match ->
 			match.groupValues[1] + match.groupValues[2]
 		}
-		return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).parseSafe(normalized)
+		return SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+			timeZone = TimeZone.getTimeZone("UTC")
+		}.parseSafe(normalized)
 	}
 
 	private fun <V> IntObjectMap<V>.keyOf(value: V): Int {		forEach { k, v ->

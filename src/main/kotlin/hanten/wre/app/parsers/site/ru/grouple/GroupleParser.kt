@@ -75,7 +75,7 @@ internal abstract class GroupleParser(
     override val authUrl: String
         get() {
             val targetUri = "https://${domain}/".urlEncoded()
-            return "https://3.grouple.co/internal/auth/sso?siteId=$siteId&=targetUri=$targetUri"
+            return "https://3.grouple.co/internal/auth/sso?siteId=$siteId&targetUri=$targetUri"
         }
 
     override suspend fun isAuthorized(): Boolean = hasAuthCookie()
@@ -591,7 +591,8 @@ internal abstract class GroupleParser(
 
     private suspend fun tryHead(url: String): Boolean = runCatchingCancellable {
         webClient.httpHead(url).use { response ->
-            response.isSuccessful && !response.isPumpkin() && response.headersContentLength() >= MIN_IMAGE_SIZE
+            val length = response.headersContentLength()
+            response.isSuccessful && !response.isPumpkin() && (length < 0 || length >= MIN_IMAGE_SIZE)
         }
     }.getOrDefault(false)
 

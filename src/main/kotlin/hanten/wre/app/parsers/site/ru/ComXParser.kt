@@ -32,7 +32,7 @@ internal class ComXParser(context: MangaLoaderContext) :
 	override val configKeyDomain = ConfigKey.Domain("com-x.life", "comx.life")
 
 	private val availableTags = suspendLazy(initializer = ::fetchTags)
-	private val cdnImageUrl = "img.com-x.life/comix/"
+	private val cdnImageHost = "img.com-x.life"
 
 	override fun onCreateConfig(keys: MutableCollection<ConfigKey<*>>) {
 		super.onCreateConfig(keys)
@@ -270,7 +270,7 @@ internal class ComXParser(context: MangaLoaderContext) :
 		} ?: throw ParseException("Image data not found", chapter.url)
 		val host = """"host"\s*:\s*"([^"]+)"""".toRegex()
 			.find(scriptData)?.groupValues?.get(1)?.takeUnless { it.isEmpty() }
-			?: cdnImageUrl.removeSuffix("/")
+			?: cdnImageHost
 		val data = scriptData
 			.substringAfter("\"images\":[")
 			.substringBefore("]")

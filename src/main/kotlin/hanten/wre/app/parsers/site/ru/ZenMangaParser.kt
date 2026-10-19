@@ -3,6 +3,7 @@ package hanten.wre.app.parsers.site.ru
 import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import hanten.wre.app.parsers.MangaLoaderContext
@@ -28,7 +29,9 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 	MangaParserAuthProvider {
 
 	private val astroJsonParser = AstroJsonParser()
-	private val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+	private val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+		timeZone = TimeZone.getTimeZone("UTC")
+	}
 
 	private val dateFormatShort = SimpleDateFormat("dd.MM.yyyy", Locale.US)
 
@@ -232,7 +235,9 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 			val imageUrl = pageMap.getString("image")
 			MangaPage(
 				id = generateUid(id),
-				url = "$imageUrl?width=1600",
+				url = imageUrl.toHttpUrlOrNull()?.newBuilder()
+					?.addQueryParameter("width", "1600")
+					?.build()?.toString() ?: imageUrl,
 				preview = null,
 				source = source,
 			)

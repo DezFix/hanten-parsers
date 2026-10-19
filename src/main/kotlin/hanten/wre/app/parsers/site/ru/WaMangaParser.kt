@@ -77,7 +77,9 @@ internal class WaMangaParser(
 		val chaptersJson = retryIO {
 			webClient.httpGet("${apiUrl()}/manga/${manga.url}/chapters").parseJsonArray()
 		}
-		val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", sourceLocale)
+		val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", sourceLocale).apply {
+			timeZone = TimeZone.getTimeZone("UTC")
+		}
 		val scanlator = jo.optJSONArray("teams")
 			?.mapJSON { it.getStringOrNull("name") }
 			?.filterNotNull()
