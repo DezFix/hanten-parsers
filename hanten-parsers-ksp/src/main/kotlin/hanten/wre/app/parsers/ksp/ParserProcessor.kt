@@ -48,12 +48,14 @@ class ParserProcessor(
                 logger.warn(e.toString(), null)
                 null
             }
-        val totalCount = sourcesFile?.writer().use { sourcesWriter ->
+        val counts = sourcesFile?.writer().use { sourcesWriter ->
             factoryFile?.writer().use { factoryWriter ->
                 writeContent(sourcesWriter, factoryWriter, symbols)
             }
         }
-        writeSummary(totalCount)
+        val totalCount = counts?.first ?: 0
+        val novelsCount = counts?.second ?: 0
+        writeSummary(totalCount, novelsCount)
         return ret
     }
 
@@ -61,9 +63,9 @@ class ParserProcessor(
         sourcesWriter: Writer?,
         factoryWriter: Writer?,
         symbols: Sequence<KSAnnotated>,
-    ): Int {
+    ): Pair<Int, Int> {
         if (sourcesWriter == null && factoryWriter == null) {
-            return 0
+            return 0 to 0
         }
         factoryWriter?.write(
             """
@@ -91,10 +93,21 @@ class ParserProcessor(
         )
 
         val visitor = ParserVisitor(sourcesWriter, factoryWriter)
-        val totalCount = symbols
+        val symbolList = symbols.toList()
+        val totalCount = symbolList
             .filter { it is KSClassDeclaration && it.validate() }
             .onEach { it.accept(visitor, Unit) }
             .count()
+        val novelsCount = symbolList.count { symbol ->
+            symbol is KSClassDeclaration && symbol.annotations.any { annotation ->
+                annotation.shortName.asString() == "MangaSourceParser" &&
+                    annotation.arguments
+                        .firstOrNull { it.name?.asString() == "type" }
+                        ?.value
+                        ?.toString()
+                        ?.endsWith("NOVEL") == true
+            }
+        }
 
         factoryWriter?.write(
             """
@@ -112,12 +125,12 @@ class ParserProcessor(
 			}
 			""".trimIndent(),
         )
-        return totalCount
+        return totalCount to novelsCount
     }
 
-    private fun writeSummary(totalCount: Int) {
+    private fun writeSummary(totalCount: Int, novelsCount: Int) {
         val file = File(options["summaryOutputDir"] ?: return, "summary.yaml")
-        file.writeText("total: $totalCount")
+        file.writeText("total: $totalCount\nnovels: $novelsCount")
     }
 
     private inner class ParserVisitor(

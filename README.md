@@ -6,7 +6,7 @@ JVM and Android applications.
 > This repository is based on [Kotatsu-Redo/kotatsu-parsers-redo](https://github.com/Kotatsu-Redo/kotatsu-parsers-redo)
 > (the parser base used by Futon) with the package rebranded to `hanten.wre.app.parsers`.
 
-![Sources count](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FDezFix%2Fhanten-parsers%2Frefs%2Fheads%2Fmaster%2F.github%2Fsummary.yaml&query=total&label=manga%20sources&color=%23E9321C) [![](https://jitpack.io/v/DezFix/hanten-parsers.svg)](https://jitpack.io/#DezFix/hanten-parsers) ![License](https://img.shields.io/github/license/DezFix/hanten-parsers)
+![Manga sources](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FDezFix%2Fhanten-parsers%2Frefs%2Fheads%2Fmaster%2F.github%2Fsummary.yaml&query=total&label=manga%20sources&color=%23E9321C) ![Novel sources](https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FDezFix%2Fhanten-parsers%2Frefs%2Fheads%2Fmaster%2F.github%2Fsummary.yaml&query=novels&label=novel%20sources&color=%2332CD32) [![](https://jitpack.io/v/DezFix/hanten-parsers.svg)](https://jitpack.io/#DezFix/hanten-parsers) ![License](https://img.shields.io/github/license/DezFix/hanten-parsers)
 
 ## Usage
 

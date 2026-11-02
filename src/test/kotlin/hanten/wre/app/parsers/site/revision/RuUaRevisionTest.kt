@@ -1,4 +1,4 @@
-﻿package hanten.wre.app.parsers.site.revision
+package hanten.wre.app.parsers.site.revision
 
 import kotlinx.coroutines.test.runTest
 import okhttp3.HttpUrl
@@ -39,6 +39,8 @@ internal class RuUaRevisionTest {
 		"DGMANGA", "HENTAIUKR", "HONEYMANGA", "MANGAINUA", "ZENKO",
 		// USAGI and HENTAILIB are @Broken (hidden in the app): kept out of the sweep on purpose
 		"ALLHENTAI", "YAOILIB",
+		// Novel sources: text pages are HTML, not image links
+		"RANOBES", "RANOBELIB", "BAKA_UA",
 	])
 	fun list(source: MangaParserSource) = runTest(timeout = timeout) {
 		val parser = context.newParserInstance(source)
@@ -58,6 +60,8 @@ internal class RuUaRevisionTest {
 		"DGMANGA", "HENTAIUKR", "HONEYMANGA", "MANGAINUA", "ZENKO",
 		// USAGI and HENTAILIB are @Broken (hidden in the app): kept out of the sweep on purpose
 		"ALLHENTAI", "YAOILIB",
+		// Novel sources: text pages are HTML, not image links
+		"RANOBES", "RANOBELIB", "BAKA_UA",
 	])
 	fun details(source: MangaParserSource) = runTest(timeout = timeout) {
 		val parser = context.newParserInstance(source)
@@ -79,6 +83,8 @@ internal class RuUaRevisionTest {
 		"DGMANGA", "HENTAIUKR", "HONEYMANGA", "MANGAINUA", "ZENKO",
 		// USAGI and HENTAILIB are @Broken (hidden in the app): kept out of the sweep on purpose
 		"ALLHENTAI", "YAOILIB",
+		// Novel sources: text pages are HTML, not image links
+		"RANOBES", "RANOBELIB", "BAKA_UA",
 	])
 	fun pages(source: MangaParserSource) = runTest(timeout = timeout) {
 		val parser = context.newParserInstance(source)
@@ -105,6 +111,8 @@ internal class RuUaRevisionTest {
 		"DGMANGA", "HENTAIUKR", "HONEYMANGA", "MANGAINUA", "ZENKO",
 		// USAGI and HENTAILIB are @Broken (hidden in the app): kept out of the sweep on purpose
 		"ALLHENTAI", "YAOILIB",
+		// Novel sources: text pages are HTML, not image links
+		"RANOBES", "RANOBELIB", "BAKA_UA",
 	])
 	fun domain(source: MangaParserSource) = runTest(timeout = timeout) {
 		val parser = context.newParserInstance(source)

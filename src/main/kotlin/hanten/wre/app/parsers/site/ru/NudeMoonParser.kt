@@ -170,7 +170,7 @@ internal class NudeMoonParser(
 	private suspend fun fetchAvailableTags(): Set<MangaTag> {
 		val domain = domain
 		val doc = webClient.httpGet("https://$domain/tags").parseHtml()
-		val root = doc.body().getElementsByAttributeValue("name", "multitags").first()
+		val root = doc.body().getElementsByAttributeValue("name", "multitags").firstOrNull()
 			?: doc.parseFailed("Tags form not found")
 		return root.select("input").mapToSet {
 			val value = it.attr("value").trim()

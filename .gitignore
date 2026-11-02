@@ -84,6 +84,11 @@ bin/
 
 src/test/resources/cookies.txt
 local.properties
+.env
+.env.*
+*.p12
+*.pfx
+*.jceks
 .kotlin/
 !/.idea/kotlin-statistics.xml
 
