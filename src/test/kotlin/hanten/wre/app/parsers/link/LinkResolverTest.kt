@@ -1,4 +1,4 @@
-package hanten.wre.app.parsers.util
+package hanten.wre.app.parsers.link
 
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Assertions
