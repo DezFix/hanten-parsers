@@ -11,6 +11,7 @@ import hanten.wre.app.parsers.MangaSourceParser
 import hanten.wre.app.parsers.MangaParserAuthProvider
 import hanten.wre.app.parsers.config.ConfigKey
 import hanten.wre.app.parsers.core.PagedMangaParser
+import hanten.wre.app.parsers.exception.AuthRequiredException
 import hanten.wre.app.parsers.exception.ParseException
 import hanten.wre.app.parsers.model.*
 import hanten.wre.app.parsers.network.CloudFlareHelper
@@ -193,6 +194,10 @@ internal class ZenMangaParser(context: MangaLoaderContext) :
 				source = source,
 			)
 		}.toList().reversed()
+		if (chapters.isEmpty() && !checkAuth()) {
+			// The redesigned site hides the chapter list from anonymous users.
+			throw AuthRequiredException(source)
+		}
 		return manga.copy(
 			title = doc.selectFirst("h1")?.text()?.trim()?.takeUnless { it.isEmpty() } ?: manga.title,
 			description = description,

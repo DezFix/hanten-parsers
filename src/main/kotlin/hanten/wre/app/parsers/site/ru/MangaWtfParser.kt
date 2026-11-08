@@ -6,6 +6,7 @@ import kotlinx.coroutines.coroutineScope
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
+import hanten.wre.app.parsers.Broken
 import hanten.wre.app.parsers.InternalParsersApi
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaSourceParser
@@ -18,6 +19,8 @@ import hanten.wre.app.parsers.util.json.*
 import java.text.SimpleDateFormat
 import java.util.*
 
+// Duplicate of InkStory (same inkstory.net backend); the old API is gone.
+@Broken
 @MangaSourceParser("MANGA_WTF", "MangaWtf", "ru")
 internal class MangaWtfParser(
 	context: MangaLoaderContext,

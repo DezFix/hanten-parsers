@@ -1,7 +1,10 @@
 package hanten.wre.app.parsers.site.ru.multichan
 
+import kotlinx.coroutines.CancellationException
+import okhttp3.Headers
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import org.jsoup.HttpStatusException
 import org.jsoup.internal.StringUtil
 import org.jsoup.nodes.Element
 import hanten.wre.app.parsers.MangaLoaderContext
@@ -9,6 +12,7 @@ import hanten.wre.app.parsers.MangaParserAuthProvider
 import hanten.wre.app.parsers.core.AbstractMangaParser
 import hanten.wre.app.parsers.exception.AuthRequiredException
 import hanten.wre.app.parsers.model.*
+import hanten.wre.app.parsers.network.UserAgents
 import hanten.wre.app.parsers.util.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -28,6 +32,12 @@ internal abstract class ChanParser(
 	override val authUrl: String
 		get() = "https://${domain}"
 
+	// The new im.manga-chan.me frontend rejects the default mobile UA with 502.
+	override fun getRequestHeaders(): Headers = super.getRequestHeaders().newBuilder()
+		.set("User-Agent", UserAgents.CHROME_DESKTOP)
+		.add("Accept-Language", "ru,en;q=0.9")
+		.build()
+
 	override suspend fun isAuthorized(): Boolean = context.cookieJar.getCookies(domain).any { it.name == "dle_user_id" }
 
 	override val filterCapabilities: MangaListFilterCapabilities
@@ -43,7 +53,15 @@ internal abstract class ChanParser(
 
 	override suspend fun getList(offset: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
 		val domain = domain
-		val doc = webClient.httpGet(buildUrl(offset, order, filter)).parseHtml()
+		val doc = try {
+			webClient.httpGet(buildUrl(offset, order, filter)).parseHtml()
+		} catch (e: CancellationException) {
+			throw e
+		} catch (e: HttpStatusException) {
+			// The old popularity endpoint intermittently returns 502.
+			if (e.statusCode !in 500..599) throw e
+			webClient.httpGet(buildUrl(offset, SortOrder.NEWEST, filter)).parseHtml()
+		}
 		val root = doc.body().selectFirst("div.main_fon")?.getElementById("content")
 			?: doc.parseFailed("Cannot find root")
 		return root.select("div.content_row").mapNotNull { row ->
