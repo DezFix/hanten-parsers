@@ -51,10 +51,11 @@ internal class WaMangaParser(
 	private fun parseManga(jo: JSONObject): Manga {
 		val id = jo.getString("id")
 		val slug = jo.getString("slug")
+		val typePath = if (jo.getStringOrNull("type") == "manhwa") "manhwa" else "manga"
 		return Manga(
 			id = generateUid(id),
 			url = id,
-			publicUrl = "https://${domain}/manga/$slug",
+			publicUrl = "https://${domain}/$typePath/$slug",
 			title = jo.getString("title"),
 			altTitles = collectAltTitles(jo),
 			coverUrl = jo.getStringOrNull("coverUrl")?.toAbsoluteUrl(domain),
@@ -72,11 +73,13 @@ internal class WaMangaParser(
 		)
 	}
 
+	private suspend fun webApiChapters(mangaId: String): List<JSONObject> = retryIO {
+		webClient.httpGet("${apiUrl()}/manga/$mangaId/chapters").parseJsonArray()
+	}.asTypedList()
+
 	override suspend fun getDetails(manga: Manga): Manga {
 		val jo = retryIO { webClient.httpGet("${apiUrl()}/manga/${manga.url}").parseJson() }
-		val chaptersJson = retryIO {
-			webClient.httpGet("${apiUrl()}/manga/${manga.url}/chapters").parseJsonArray()
-		}
+		val chaptersJson = webApiChapters(manga.url)
 		val dateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", sourceLocale).apply {
 			timeZone = TimeZone.getTimeZone("UTC")
 		}
@@ -85,6 +88,8 @@ internal class WaMangaParser(
 			?.filterNotNull()
 			?.joinToString()
 			?.takeUnless { it.isEmpty() }
+		val typePath = if (jo.getStringOrNull("type") == "manhwa") "manhwa" else "manga"
+		val slug = jo.getStringOrNull("slug") ?: manga.publicUrl.substringAfterLast('/')
 		return manga.copy(
 			altTitles = collectAltTitles(jo),
 			description = jo.getStringOrNull("description"),
@@ -92,12 +97,15 @@ internal class WaMangaParser(
 			authors = jo.optJSONArray("authors")?.asTypedList<String>()?.toSet().orEmpty(),
 			state = parseState(jo.getStringOrNull("statusTitle")),
 			largeCoverUrl = jo.getStringOrNull("imageUrl")?.toAbsoluteUrl(domain) ?: manga.largeCoverUrl,
-			chapters = chaptersJson.asTypedList<JSONObject>().mapChapters { _, it ->
+			publicUrl = "https://${domain}/$typePath/$slug",
+			chapters = chaptersJson.mapChapters { _, it ->
 				val chapterId = it.getString("id")
 				val position = it.getFloatOrDefault("position", 0f)
 				MangaChapter(
 					id = generateUid(chapterId),
-					url = chapterId,
+					// Keep manga id and position so a stale cached chapter UUID can be
+					// remapped to the current chapter after a site re-upload.
+					url = "${manga.url}/$position/$chapterId",
 					title = it.getStringOrNull("title")?.takeUnless { t -> t.isEmpty() },
 					number = position,
 					volume = 0,
@@ -111,8 +119,26 @@ internal class WaMangaParser(
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
+		val parts = chapter.url.split('/')
+		val chapterId = if (parts.size == 3) {
+			val mangaId = parts[0]
+			val position = parts[1].toFloatOrNull()
+			val cachedId = parts[2]
+			if (position == null) {
+				cachedId
+			} else {
+				// Chapter UUIDs change when the site re-uploads a chapter.
+				runCatchingCancellable {
+					webApiChapters(mangaId)
+						.firstOrNull { it.getFloatOrDefault("position", -1f) == position }
+						?.getString("id")
+				}.getOrNull() ?: cachedId
+			}
+		} else {
+			chapter.url
+		}
 		return retryIO {
-			webClient.httpGet("${apiUrl()}/chapters/${chapter.url}")
+			webClient.httpGet("${apiUrl()}/chapters/$chapterId")
 				.parseJson()
 				.getJSONArray("files")
 		}.mapJSON { file ->
