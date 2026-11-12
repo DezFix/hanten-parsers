@@ -21,6 +21,7 @@ import hanten.wre.app.parsers.model.SortOrder
 import hanten.wre.app.parsers.util.generateUid
 import hanten.wre.app.parsers.util.json.getStringOrNull
 import hanten.wre.app.parsers.util.json.mapJSON
+import hanten.wre.app.parsers.util.NovelJsonContentParser
 import hanten.wre.app.parsers.util.parseJson
 import hanten.wre.app.parsers.util.toAbsoluteUrl
 
@@ -112,6 +113,7 @@ internal class RanobeLibParser(
 		val data = webClient.httpGet(url, apiHeaders).parseJson().optJSONObject("data")
 			?: return manga
 		val cover = data.optJSONObject("cover")
+		val summary = data.getStringOrNull("summary")
 		return manga.copy(
 			title = data.getStringOrNull("rus_name") ?: manga.title,
 			altTitles = setOfNotNull(data.getStringOrNull("name")),
@@ -119,7 +121,7 @@ internal class RanobeLibParser(
 				?.toFloatOrNull()?.div(10f) ?: manga.rating,
 			coverUrl = cover?.getStringOrNull("thumbnail") ?: manga.coverUrl,
 			largeCoverUrl = cover?.getStringOrNull("default") ?: manga.largeCoverUrl,
-			description = data.getStringOrNull("summary"),
+			description = summary?.let { NovelJsonContentParser.toPlainText(it, "https://$domain") ?: it },
 			tags = parseTags(data),
 			authors = data.optJSONArray("authors")?.mapJSON { it.getStringOrNull("name") }
 				?.filterNotNull()?.toSet().orEmpty(),
@@ -136,10 +138,14 @@ internal class RanobeLibParser(
 		val content = data.getStringOrNull("content")
 			?: data.getStringOrNull("body")
 			?: return emptyList()
+		val html = NovelJsonContentParser.toHtml(content, data.opt("attachments"), "https://$domain")
+		if (html.isBlank()) {
+			return emptyList()
+		}
 		return listOf(
 			MangaPage(
 				id = generateUid(chapter.url),
-				url = content,
+				url = html,
 				preview = null,
 				source = source,
 			),

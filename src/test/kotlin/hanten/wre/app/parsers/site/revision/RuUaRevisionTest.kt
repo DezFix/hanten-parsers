@@ -40,7 +40,7 @@ internal class RuUaRevisionTest {
 		// USAGI and HENTAILIB are @Broken (hidden in the app): kept out of the sweep on purpose
 		"ALLHENTAI", "YAOILIB",
 		// Novel sources: text pages are HTML, not image links
-		"RANOBES", "RANOBELIB", "BAKA_UA",
+		"RANOBES", "RANOBELIB", "RANOBE_ME", "BAKA_UA",
 	])
 	fun list(source: MangaParserSource) = runTest(timeout = timeout) {
 		val parser = context.newParserInstance(source)
@@ -61,7 +61,7 @@ internal class RuUaRevisionTest {
 		// USAGI and HENTAILIB are @Broken (hidden in the app): kept out of the sweep on purpose
 		"ALLHENTAI", "YAOILIB",
 		// Novel sources: text pages are HTML, not image links
-		"RANOBES", "RANOBELIB", "BAKA_UA",
+		"RANOBES", "RANOBELIB", "RANOBE_ME", "BAKA_UA",
 	])
 	fun details(source: MangaParserSource) = runTest(timeout = timeout) {
 		val parser = context.newParserInstance(source)
@@ -84,7 +84,7 @@ internal class RuUaRevisionTest {
 		// USAGI and HENTAILIB are @Broken (hidden in the app): kept out of the sweep on purpose
 		"ALLHENTAI", "YAOILIB",
 		// Novel sources: text pages are HTML, not image links
-		"RANOBES", "RANOBELIB", "BAKA_UA",
+		"RANOBES", "RANOBELIB", "RANOBE_ME", "BAKA_UA",
 	])
 	fun pages(source: MangaParserSource) = runTest(timeout = timeout) {
 		val parser = context.newParserInstance(source)
@@ -112,7 +112,7 @@ internal class RuUaRevisionTest {
 		// USAGI and HENTAILIB are @Broken (hidden in the app): kept out of the sweep on purpose
 		"ALLHENTAI", "YAOILIB",
 		// Novel sources: text pages are HTML, not image links
-		"RANOBES", "RANOBELIB", "BAKA_UA",
+		"RANOBES", "RANOBELIB", "RANOBE_ME", "BAKA_UA",
 	])
 	fun domain(source: MangaParserSource) = runTest(timeout = timeout) {
 		val parser = context.newParserInstance(source)
