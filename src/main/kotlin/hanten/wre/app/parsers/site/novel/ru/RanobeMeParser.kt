@@ -18,7 +18,7 @@ import hanten.wre.app.parsers.model.MangaParserSource
 import hanten.wre.app.parsers.model.MangaState
 import hanten.wre.app.parsers.model.MangaTag
 import hanten.wre.app.parsers.model.SortOrder
-import hanten.wre.app.parsers.util.generateUid
+import hanten.wre.app.parsers.util.longHashCode
 import hanten.wre.app.parsers.util.parseHtml
 import hanten.wre.app.parsers.util.toAbsoluteUrl
 
@@ -151,7 +151,7 @@ internal class RanobeMeParser(
 		}
 		return listOf(
 			MangaPage(
-				id = generateUid(chapter.url),
+				id = legacyId(chapter.url),
 				url = html,
 				preview = null,
 				source = source,
@@ -168,7 +168,7 @@ internal class RanobeMeParser(
 		if (title.isEmpty()) return null
 		val cover = card.selectFirst(".FicTable_Cover img")?.absUrl("src")?.takeIf { it.isNotBlank() }
 		return Manga(
-			id = generateUid(href),
+			id = legacyId(href),
 			title = title,
 			altTitles = emptySet(),
 			url = href,
@@ -192,7 +192,7 @@ internal class RanobeMeParser(
 			if (!seen.add(href)) continue
 			val title = link.text().trim().takeIf { it.isNotBlank() } ?: continue
 			result += MangaChapter(
-				id = generateUid(href),
+				id = legacyId(href),
 				title = title,
 				number = href.substringAfterLast('/').toFloatOrNull()?.plus(1f) ?: (result.size + 1).toFloat(),
 				volume = 0,
@@ -217,5 +217,12 @@ internal class RanobeMeParser(
 	private companion object {
 		const val PAGE_SIZE = 20
 		const val RATING_UNKNOWN = -1f
+
+		/**
+		 * The app used `"RANOBE_ME_$href".longHashCode()` before Ranobe.me moved
+		 * into the parsers. Keeping the old scheme preserves library and history
+		 * entries that were created by the built-in repository.
+		 */
+		fun legacyId(href: String): Long = "RANOBE_ME_$href".longHashCode()
 	}
 }
