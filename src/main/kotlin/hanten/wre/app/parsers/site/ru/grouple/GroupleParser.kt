@@ -117,7 +117,13 @@ internal abstract class GroupleParser(
         }
         doc.checkAuthPage()
         val root = if (filter.isEmpty()) {
-            doc.body().let { body -> (body.getElementById("mangaBox") ?: body.getElementById("mangaResults")) }
+            // The new frontend removed #mangaBox/#mangaResults from catalog pages,
+            // so fall back to the page body and find .tiles.row there.
+            doc.body().let { body ->
+                body.getElementById("mangaBox")
+                    ?: body.getElementById("mangaResults")
+                    ?: body
+            }
         } else {
             doc
         }
@@ -145,6 +151,8 @@ internal abstract class GroupleParser(
         }
         val dateFormat = SimpleDateFormat("dd.MM.yy", Locale.US)
         val coverImg = root.selectFirst("div.subject-cover")?.selectFirst("img")
+            ?: doc.selectFirst(".cr-hero-poster__img")
+            ?: doc.selectFirst(".cr-hero-overlay__bg")
         val translations = if (config[splitTranslationsKey]) {
             root.selectFirst("div.translator-selection")
                 ?.select(".translator-selection-item")
@@ -286,7 +294,10 @@ internal abstract class GroupleParser(
             rating = parseDetailsRating(root) ?: manga.rating,
             largeCoverUrl = coverImg?.attrAsAbsoluteUrlOrNull("data-full"),
             coverUrl = manga.coverUrl
-                ?: coverImg?.attrAsAbsoluteUrlOrNull("data-thumb")?.replace("_p.", "."),
+                ?: coverImg?.attrAsAbsoluteUrlOrNull("data-thumb")?.replace("_p.", ".")
+                ?: coverImg?.attrAsAbsoluteUrlOrNull("src")
+                ?: coverImg?.attrAsAbsoluteUrlOrNull("data-src")
+                ?: coverImg?.attrAsAbsoluteUrlOrNull("data-bg"),
             tags = tags,
             state = if (isRestricted) {
                 MangaState.RESTRICTED
