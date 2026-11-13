@@ -15,6 +15,7 @@ import okhttp3.internal.closeQuietly
 import okio.IOException
 import org.json.JSONArray
 import org.json.JSONObject
+import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
 import hanten.wre.app.parsers.MangaLoaderContext
 import hanten.wre.app.parsers.MangaParserAuthProvider
@@ -73,12 +74,21 @@ internal abstract class GroupleParser(
     )
 
     override val authUrl: String
-        get() {
-            val targetUri = "https://${domain}/".urlEncoded()
-            return "https://3.grouple.co/internal/auth/sso?siteId=$siteId&targetUri=$targetUri"
-        }
+        get() = "https://$domain/internal/auth"
 
-    override suspend fun isAuthorized(): Boolean = hasAuthCookie()
+    override suspend fun isAuthorized(): Boolean = hasAuthMarker()
+
+    /**
+     * The old `gwt` cookie is not exposed by the current frontend. The site renders
+     * `window.current_user_id` for an authenticated user, so use that marker and keep the
+     * cookie check only as a legacy fallback.
+     */
+    private suspend fun hasAuthMarker(): Boolean {
+        val html = runCatchingCancellable {
+            webClient.httpGet("https://$domain/", getRequestHeaders()).parseHtml().outerHtml()
+        }.getOrNull() ?: return false
+        return AUTH_MARKER.containsMatchIn(html)
+    }
 
     override val filterCapabilities: MangaListFilterCapabilities
         get() = MangaListFilterCapabilities(
@@ -96,14 +106,20 @@ internal abstract class GroupleParser(
 
     override suspend fun getList(offset: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
         val domain = domain
-        val root = if (filter.isEmpty()) {
+        val doc = if (filter.isEmpty()) {
             webClient.httpGet(
                 "https://$domain/list?sortType=${
                     getSortKey(order)
                 }&offset=${offset upBy PAGE_SIZE}",
-            ).parseHtml().body().let { doc -> (doc.getElementById("mangaBox") ?: doc.getElementById("mangaResults")) }
+            ).parseHtml()
         } else {
             advancedSearch(offset, order, filter).parseHtml()
+        }
+        doc.checkAuthPage()
+        val root = if (filter.isEmpty()) {
+            doc.body().let { body -> (body.getElementById("mangaBox") ?: body.getElementById("mangaResults")) }
+        } else {
+            doc
         }
         checkNotNull(root) { "Root not found" }
         val tiles = root.selectFirst("div.tiles.row")
@@ -113,12 +129,17 @@ internal abstract class GroupleParser(
             }
             root.parseFailed("No tiles found")
         }
-        return tiles.select("div.tile").mapNotNull(::parseManga)
+        val result = tiles.select("div.tile").mapNotNull(::parseManga)
+        if (result.isEmpty()) {
+            root.parseFailed("No manga parsed")
+        }
+        return result
     }
 
     override suspend fun getDetails(manga: Manga): Manga {
         val response = webClient.httpGet(manga.url.toAbsoluteUrl(domain))
         val doc = response.parseHtml()
+        doc.checkAuthPage()
         val root = doc.body().requireElementById("mangaBox").run {
             selectFirst("div.leftContent") ?: this
         }
@@ -472,12 +493,12 @@ internal abstract class GroupleParser(
     }
 
     override suspend fun getUsername(): String {
-        val root = webClient.httpGet("https://grouple.co/").parseHtml().body()
-        val element = root.selectFirst("img.user-avatar") ?: throw AuthRequiredException(source)
-        val res = element.parent()?.text()
-        return if (res.isNullOrEmpty()) {
-            root.parseFailed("Cannot find username")
-        } else res
+        val html = webClient.httpGet("https://$domain/", getRequestHeaders()).parseHtml().outerHtml()
+        val userId = AUTH_MARKER.find(html)?.groupValues?.getOrNull(1)
+        if (userId != null) {
+            return userId
+        }
+        throw AuthRequiredException(source)
     }
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -838,7 +859,16 @@ internal abstract class GroupleParser(
 
     private fun hasAuthCookie() = context.cookieJar.getCookies(domain).any { it.name == "gwt" }
 
+    private fun Document.checkAuthPage() {
+        if (selectFirst(".auth-page") != null ||
+            getElementsContainingOwnText("нужно авторизоваться").isNotEmpty()
+        ) {
+            throw AuthRequiredException(source)
+        }
+    }
+
     private companion object {
+        private val AUTH_MARKER = Regex("""window\.current_user_id\s*=\s*['"]?(\d+)""")
         private val HREF_VOLUME_REGEX = Regex("""/vol(\d+)/""", RegexOption.IGNORE_CASE)
         private val HREF_CHAPTER_NUMBER_REGEX = Regex("""/vol\d+/([0-9]+(?:[.,]\d+)?)""", RegexOption.IGNORE_CASE)
         private val TITLE_CHAPTER_NUMBER_REGEX = Regex("""([0-9]+(?:[.,]\d+)?)\s*$""")
