@@ -314,17 +314,9 @@ internal class SenkuroParser(context: MangaLoaderContext) :
 			?.optJSONObject("original")
 			?.getStringOrNull("url")
 
-		val description = buildString {
-			if (altTitles.isNotEmpty()) {
-				append("Альтернативные названия:\n")
-				append(altTitles.joinToString(" / "))
-			}
-			val ruDescription = parseLocalizationDescription(info.optJSONArray("localizations"))
-			if (!ruDescription.isNullOrBlank()) {
-				if (isNotEmpty()) append("\n\n")
-				append(ruDescription)
-			}
-		}.ifBlank { null }
+		// Alternative titles go to Manga.altTitles (the app lists them), not into the description
+		val description = parseLocalizationDescription(info.optJSONArray("localizations"))
+			?.takeIf { it.isNotBlank() }
 
 		val authors = LinkedHashSet<String>(8)
 		val staff = info.optJSONArray("mainStaff") ?: JSONArray()

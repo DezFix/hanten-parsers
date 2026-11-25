@@ -270,13 +270,7 @@ internal class MangaBuff(context: MangaLoaderContext) :
 		doc.selectFirst(".manga")?.attrOrNull("data-fav-count")?.toIntOrNull()?.let {
 			lines.add("Избранное: %,d".format(Locale("ru"), it))
 		}
-		val alt = doc.select(".manga__name-alt > span, .manga-mobile__name-alt > span")
-			.eachText()
-			.filter { it.isNotBlank() }
-		if (alt.isNotEmpty()) {
-			lines.add("Альтернативные названия:")
-			lines.addAll(alt.map { "• $it" })
-		}
+		// Alternative titles go to Manga.altTitles, not into the description
 		return lines.joinToString(separator = "\n\n").ifBlank { "" }
 	}
 
