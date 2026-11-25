@@ -1,7 +1,10 @@
 # Hanten parsers
 
-This library provides a collection of manga parsers for convenient access manga available on the web. It can be used in
-JVM and Android applications.
+This library provides a collection of manga and light novel parsers for convenient access to content available on the
+web. It powers the [Hanten](https://github.com/DezFix/Hanten) app (3.0+) and can be used in JVM and Android applications.
+
+The focus is **Russian and Ukrainian sources**: they are tested first and fixed fastest. Sources in other languages are
+kept from the upstream base and fixed on reports.
 
 > This repository is based on [Kotatsu-Redo/kotatsu-parsers-redo](https://github.com/Kotatsu-Redo/kotatsu-parsers-redo)
 > (the parser base used by Futon) with the package rebranded to `hanten.wre.app.parsers`.
@@ -50,7 +53,7 @@ JVM and Android applications.
 3. Usage in code
 
    ```kotlin
-   val parser = mangaLoaderContext.newParserInstance(MangaParserSource.MANGADEX)
+   val parser = mangaLoaderContext.newParserInstance(MangaParserSource.REMANGA)
    ```
 
    `mangaLoaderContext` is an implementation of the `MangaLoaderContext` class.
@@ -60,9 +63,11 @@ JVM and Android applications.
 
 ## Projects that use the library
 
-- [Hanten](https://github.com/DezFix/Hanten)
-  
+- [Hanten](https://github.com/DezFix/Hanten) — manga, manhwa and light novel reader for Android
+
 ## Contribution
+
+A broken source? Open an issue with the source name and what fails (catalog, search, details or pages).
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for the guidelines.
 
